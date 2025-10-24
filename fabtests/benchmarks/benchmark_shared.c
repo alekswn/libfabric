@@ -548,8 +548,13 @@ int bandwidth(void)
 
 	if (opts.dst_addr) {
 		for (i = j = 0; i < opts.iterations + opts.warmup_iterations; i++) {
-			if (i == opts.warmup_iterations)
+			if (i == opts.warmup_iterations) {
+				ret = bw_tx_comp();
+				if (ret)
+					return ret;
+				j = 0;
 				ft_start();
+			}
 
 			if (ft_check_opts(FT_OPT_VERIFY_DATA)) {
 				ret = ft_fill_buf(tx_ctx_arr[j].buf,
@@ -635,8 +640,13 @@ static int bw_rma_comp(enum ft_rma_opcodes rma_op, int num_completions)
 {
 	int ret;
 
-	ret = ft_get_tx_comp(tx_seq);
+	if (rma_op == FT_RMA_WRITEDATA) {
+		ret = ft_get_rx_comp(rx_seq-1);
+		if (ret)
+			return ret;
+	}
 
+	ret = ft_get_tx_comp(tx_seq);
 	if (ret)
 		return ret;
 
@@ -717,6 +727,17 @@ int bandwidth_rma(enum ft_rma_opcodes rma_op, struct fi_rma_iov *remote)
 			}
 			break;
 		case FT_RMA_WRITEDATA:
+			if (fi->rx_attr->mode & FI_RX_CQ_DATA) {
+			  ret = ft_post_rx(ep, 0, &rx_ctx_arr[j].context);
+				if (ret)
+					return ret;
+	    } else {
+         /* Just increment the seq # instead of
+          * posting recv so that we wait for
+          * remote write completion on the next
+          * iteration */
+	      rx_seq++;
+			}
 			if (opts.transfer_size <= inject_size) {
 				ret = ft_post_rma_inject(FT_RMA_WRITEDATA,
 						tx_buf + offset,
