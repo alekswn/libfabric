@@ -183,14 +183,14 @@ static char *rpc_op_str(uint32_t op)
 
 static int rpc_inject(struct rpc_hdr *hdr, fi_addr_t addr)
 {
-	uint64_t start;
+	struct ft_timer timer;
 	int ret;
 
-	start = ft_gettime_ms();
+	ft_timer_start(&timer);
 	do {
 		(void) fi_cq_read(txcq, NULL, 0);
 		ret = (int) fi_inject(ep, hdr, sizeof(*hdr), addr);
-	} while ((ret == -FI_EAGAIN) && (ft_gettime_ms() - start < rpc_timeout));
+	} while ((ret == -FI_EAGAIN) && (!ft_timer_is_elapsed(&timer, rpc_timeout, MILLI)));
 
 	if (ret)
 		FT_PRINTERR("fi_inject", ret);
@@ -201,14 +201,14 @@ static int rpc_inject(struct rpc_hdr *hdr, fi_addr_t addr)
 static int rpc_send(struct rpc_hdr *hdr, size_t size, fi_addr_t addr)
 {
 	struct fi_cq_tagged_entry comp;
-	uint64_t start;
+	struct ft_timer timer;
 	int ret;
 
-	start = ft_gettime_ms();
+	ft_timer_start(&timer);
 	do {
 		(void) fi_cq_read(txcq, NULL, 0);
 		ret = (int) fi_send(ep, hdr, size, NULL, addr, hdr);
-	} while ((ret == -FI_EAGAIN) && (ft_gettime_ms() - start < rpc_timeout));
+	} while ((ret == -FI_EAGAIN) && (!ft_timer_is_elapsed(&timer, rpc_timeout, MILLI)));
 
 	if (ret) {
 		FT_PRINTERR("fi_send", ret);
@@ -224,7 +224,7 @@ static int rpc_deliver(struct rpc_hdr *hdr, size_t size, fi_addr_t addr)
 	struct fi_msg msg = {0};
 	struct iovec iov;
 	struct fi_cq_tagged_entry comp;
-	uint64_t start;
+	struct ft_timer timer;
 	int ret;
 
 	iov.iov_base = hdr;
@@ -235,11 +235,11 @@ static int rpc_deliver(struct rpc_hdr *hdr, size_t size, fi_addr_t addr)
 	msg.addr = addr;
 	msg.context = hdr;
 
-	start = ft_gettime_ms();
+	ft_timer_start(&timer);
 	do {
 		(void) fi_cq_read(txcq, NULL, 0);
 		ret = (int) fi_sendmsg(ep, &msg, FI_DELIVERY_COMPLETE);
-	} while ((ret == -FI_EAGAIN) && (ft_gettime_ms() - start < rpc_timeout));
+	} while ((ret == -FI_EAGAIN) && (!ft_timer_is_elapsed(&timer, rpc_timeout, MILLI)));
 
 	if (ret) {
 		FT_PRINTERR("fi_sendmsg (delivery_complete)", ret);
@@ -1099,7 +1099,7 @@ int (*handle_rpc[cmd_last])(struct rpc_hdr *req, struct rpc_resp *resp) = {
 static void start_rpc(struct rpc_hdr *req)
 {
 	struct rpc_resp *resp;
-	uint64_t start;
+	struct ft_timer timer;
 	int ret;
 
 	printf("(%d) start rpc %s\n", req->client_id, rpc_cmd_str(req->cmd));
@@ -1120,11 +1120,11 @@ static void start_rpc(struct rpc_hdr *req)
 		goto free;
 	}
 
-	start = ft_gettime_ms();
+	ft_timer_start(&timer);
 	do {
 		(void) fi_cq_read(txcq, NULL, 0);
 		ret = handle_rpc[req->cmd](req, resp);
-	} while ((ret == -FI_EAGAIN) && (ft_gettime_ms() - start < rpc_timeout));
+	} while ((ret == -FI_EAGAIN) && (!ft_timer_is_elapsed(&timer, rpc_timeout, MILLI)));
 
 	if (ret) {
 		resp->status = ret;

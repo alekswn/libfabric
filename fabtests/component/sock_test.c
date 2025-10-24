@@ -57,7 +57,7 @@
 
 static int *fds;
 static int connections = 1000;
-uint64_t starttime, endtime;
+
 
 static struct pollfd *poll_set;
 #if HAVE_EPOLL == 1
@@ -76,10 +76,10 @@ static void show_header(void)
 	printf("%-20s : ---------\n", "----");
 }
 
-static void show_result(const char *test, uint64_t starttime, uint64_t endtime)
+static void show_result(const char *test, const struct ft_timer* timer)
 {
 	printf("%-20s : %.2f\n", test,
-	       (float) (endtime - starttime) / opts.iterations);
+	       (float) (ft_timer_get_elapsed(timer, MICRO)) / opts.iterations);
 }
 
 static int start_server(void)

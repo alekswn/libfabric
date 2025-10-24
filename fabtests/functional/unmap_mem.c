@@ -101,7 +101,7 @@ static int pingpong(void)
 	}
 	ft_stop();
 
-	show_perf(NULL, opts.transfer_size, opts.iterations, &start, &end, 2);
+	show_perf(NULL, opts.transfer_size, opts.iterations, 2);
 	return 0;
 }
 

@@ -626,10 +626,10 @@ static int ft_run_latency(void)
 		if (ret)
 			return ret;
 
-		clock_gettime(CLOCK_MONOTONIC, &start);
+		ft_start(&ft_global_timer);
 		ret = (test_info.ep_type == FI_EP_DGRAM) ?
 			ft_pingpong_dgram() : ft_pingpong();
-		clock_gettime(CLOCK_MONOTONIC, &end);
+		ft_timer_stop(&ft_global_timer);
 		if (ret) {
 			FT_PRINTERR("latency test failed!", ret);
 			return ret;
@@ -639,7 +639,7 @@ static int ft_run_latency(void)
 		if (ret)
 			return ret;
 
-		show_perf("lat", ft_ctrl.size_array[i], ft_ctrl.xfer_iter, &start, &end, 2);
+		show_perf("lat", ft_ctrl.size_array[i], ft_ctrl.xfer_iter, 2);
 	}
 
 	return 0;
@@ -805,10 +805,10 @@ static int ft_run_bandwidth(void)
 		if (ret)
 			return ret;
 
-		clock_gettime(CLOCK_MONOTONIC, &start);
+		ft_timer_start(&ft_global_timer);
 		ret = (test_info.ep_type == FI_EP_DGRAM) ?
 			ft_bw_dgram(&recv_cnt) : ft_bw();
-		clock_gettime(CLOCK_MONOTONIC, &end);
+		ft_timer_stop(&ft_global_timer);
 		if (ret) {
 			FT_PRINTERR("bw test failed!", ret);
 			return ret;
@@ -818,7 +818,7 @@ static int ft_run_bandwidth(void)
 		if (ret)
 			return ret;
 
-		show_perf("bw", ft_ctrl.size_array[i], recv_cnt, &start, &end, 1);
+		show_perf("bw", ft_ctrl.size_array[i], recv_cnt, 1);
 	}
 
 	return 0;

@@ -102,7 +102,6 @@ static int pingpong_pre_posted_rx(size_t inject_size)
 		for (i = 0; i < opts.iterations + opts.warmup_iterations; i++) {
 			if (i == opts.warmup_iterations)
 				ft_start();
-
 			if (opts.transfer_size <= inject_size)
 				ret = ft_inject(ep, remote_fi_addr,
 						opts.transfer_size);
@@ -250,10 +249,9 @@ int pingpong(void)
 	}
 
 	if (opts.machr)
-		show_perf_mr(opts.transfer_size, opts.iterations, &start, &end, 2,
-				opts.argc, opts.argv);
+		show_perf_mr(opts.transfer_size, opts.iterations, 2, opts.argc, opts.argv);
 	else
-		show_perf(NULL, opts.transfer_size, opts.iterations, &start, &end, 2);
+		show_perf(NULL, opts.transfer_size, opts.iterations, 2);
 
 	return 0;
 }
@@ -380,10 +378,9 @@ int pingpong_rma(enum ft_rma_opcodes rma_op, struct fi_rma_iov *remote)
 	ft_stop();
 
 	if (opts.machr)
-		show_perf_mr(opts.transfer_size, opts.iterations, &start, &end, 2,
-				opts.argc, opts.argv);
+		show_perf_mr(opts.transfer_size, opts.iterations, 2, opts.argc, opts.argv);
 	else
-		show_perf(NULL, opts.transfer_size, opts.iterations, &start, &end, 2);
+		show_perf(NULL, opts.transfer_size, opts.iterations, 2);
 
 	return 0;
 }
@@ -433,10 +430,9 @@ int rma_tx_completion(enum ft_rma_opcodes rma_op, struct fi_rma_iov *remote)
 
 		ft_stop();
 		if (opts.machr)
-			show_perf_mr(opts.transfer_size, opts.iterations, &start, &end, 1,
-				opts.argc, opts.argv);
+			show_perf_mr(opts.transfer_size, opts.iterations, 1, opts.argc, opts.argv);
 		else
-			show_perf(NULL, opts.transfer_size, opts.iterations, &start, &end, 1);
+			show_perf(NULL, opts.transfer_size, opts.iterations, 1);
 
 		/* Inform RMA target that the test has ended */
 		ret = ft_sync();
@@ -501,7 +497,6 @@ static int rma_bw_rx_comp()
 	ret = ft_get_rx_comp(rx_seq - 1);
 	if (ret)
 		return ret;
-
 	return ft_tx(ep, remote_fi_addr, FT_RMA_SYNC_MSG_BYTES, &tx_ctx);
 }
 
@@ -623,10 +618,9 @@ int bandwidth(void)
 	ft_stop();
 
 	if (opts.machr)
-		show_perf_mr(opts.transfer_size, opts.iterations, &start, &end, 1,
-				opts.argc, opts.argv);
+		show_perf_mr(opts.transfer_size, opts.iterations, 1, opts.argc, opts.argv);
 	else
-		show_perf(NULL, opts.transfer_size, opts.iterations, &start, &end, 1);
+		show_perf(NULL, opts.transfer_size, opts.iterations, 1);
 
 	return 0;
 }
@@ -781,9 +775,8 @@ int bandwidth_rma(enum ft_rma_opcodes rma_op, struct fi_rma_iov *remote)
 	ft_stop();
 
 	if (opts.machr)
-		show_perf_mr(opts.transfer_size, opts.iterations, &start, &end,	1,
-				opts.argc, opts.argv);
+		show_perf_mr(opts.transfer_size, opts.iterations, 1, opts.argc, opts.argv);
 	else
-		show_perf(NULL, opts.transfer_size, opts.iterations, &start, &end, 1);
+		show_perf(NULL, opts.transfer_size, opts.iterations, 1);
 	return 0;
 }

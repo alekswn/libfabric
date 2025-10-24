@@ -178,11 +178,9 @@ static int run_test(void)
 	ft_stop();
 
 	if (opts.machr)
-		show_perf_mr(opts.transfer_size, opts.iterations,
-			&start, &end, 1, opts.argc, opts.argv);
+		show_perf_mr(opts.transfer_size, opts.iterations, 1, opts.argc, opts.argv);
 	else
-		show_perf(NULL, opts.transfer_size, opts.iterations,
-			&start, &end, 1);
+		show_perf(NULL, opts.transfer_size, opts.iterations, 1);
 
 	return ret;
 }
