@@ -635,15 +635,7 @@ static int bw_rma_comp(enum ft_rma_opcodes rma_op, int num_completions)
 {
 	int ret;
 
-	if (rma_op == FT_RMA_WRITEDATA) {
-		/* for writedata, only the client sends,
-		 * and only the server verifies. */
-		if (opts.dst_addr)
-			return bw_tx_comp();
-		ret = rma_bw_rx_comp();
-	} else {
-		ret = ft_get_tx_comp(tx_seq);
-	}
+	ret = ft_get_tx_comp(tx_seq);
 
 	if (ret)
 		return ret;
@@ -725,35 +717,23 @@ int bandwidth_rma(enum ft_rma_opcodes rma_op, struct fi_rma_iov *remote)
 			}
 			break;
 		case FT_RMA_WRITEDATA:
-			if (!opts.dst_addr) {
-				if (fi->rx_attr->mode & FI_RX_CQ_DATA)
-					ret = ft_post_rx(ep, 0, &rx_ctx_arr[j].context);
-				else
-					/* Just increment the seq # instead of
-					 * posting recv so that we wait for
-					 * remote write completion on the next
-					 * iteration */
-					rx_seq++;
-
+			if (opts.transfer_size <= inject_size) {
+				ret = ft_post_rma_inject(FT_RMA_WRITEDATA,
+						tx_buf + offset,
+						opts.transfer_size,
+						remote);
+			} else if (opts.use_fi_more) {
+				flags = set_fi_more_flag(i, j, flags);
+				flags |= FI_REMOTE_CQ_DATA;
+				ret = ft_post_rma_writemsg(
+						tx_buf + offset,
+						opts.transfer_size, remote,
+						&tx_ctx_arr[j].context, flags);
 			} else {
-				if (opts.transfer_size <= inject_size) {
-					ret = ft_post_rma_inject(FT_RMA_WRITEDATA,
-							tx_buf + offset,
-							opts.transfer_size,
-							remote);
-				} else if (opts.use_fi_more) {
-					flags = set_fi_more_flag(i, j, flags);
-					flags |= FI_REMOTE_CQ_DATA;
-					ret = ft_post_rma_writemsg(
-							tx_buf + offset,
-							opts.transfer_size, remote,
-							&tx_ctx_arr[j].context, flags);
-				} else {
-					ret = ft_post_rma(FT_RMA_WRITEDATA,
-							tx_buf + offset,
-							opts.transfer_size,
-							remote,	&tx_ctx_arr[j].context);
-				}
+				ret = ft_post_rma(FT_RMA_WRITEDATA,
+						tx_buf + offset,
+						opts.transfer_size,
+						remote,	&tx_ctx_arr[j].context);
 			}
 			break;
 		case FT_RMA_READ:
