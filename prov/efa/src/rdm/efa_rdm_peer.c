@@ -8,6 +8,7 @@
 #include "efa_rdm_pke_utils.h"
 #include "efa_rdm_pke_req.h"
 #include "efa_rdm_pke_rtm.h"
+#include "efa_rdm_pke_print.h"
 
 /**
  * @brief initialize a rdm peer
@@ -162,7 +163,8 @@ int efa_rdm_peer_reorder_msg(struct efa_rdm_peer *peer, struct efa_rdm_ep *ep,
 		if (ofi_recvwin_id_processed(robuf, msg_id)) {
 			EFA_WARN(FI_LOG_EP_CTRL,
 			       "Error: message id has already been processed. received: %" PRIu32 " expected: %"
-			       PRIu32 "\n", msg_id, ofi_recvwin_next_exp_id(robuf));
+			       PRIu32 " peer %p\n", msg_id, ofi_recvwin_next_exp_id(robuf), peer);
+			efa_rdm_pke_print(pkt_entry, "already processed pke");
 			return -FI_EALREADY;
 		} else {
 			/* Current receive window size is too small to hold incoming messages.

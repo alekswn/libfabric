@@ -7,8 +7,6 @@
 
 #include "efa.h"
 
-#if ENABLE_DEBUG
 void efa_rdm_pke_print(struct efa_rdm_pke *pkt_entry, char *prefix);
-#endif
 
 #endif
