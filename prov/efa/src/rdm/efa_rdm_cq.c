@@ -703,6 +703,16 @@ enum ibv_wc_status efa_rdm_cq_process_wc(struct efa_ibv_cq *cq, struct efa_rdm_e
 			assert(0 && "Unhandled opcode");
 		}
 	} else {
+		volatile uint32_t *wiredata = (uint32_t *) pkt_entry->wiredata;
+		if (*wiredata == 0xdeadbeef) {
+			EFA_WARN(FI_LOG_CQ,
+				 "ep %p pkt_entry %p qpn %u qkey %u get garbage wire data "
+				 "on pkt %p of pkt_size %u\n",
+				 pkt_entry->ep, pkt_entry,
+				 pkt_entry->ep->base_ep.qp->qp_num,
+				 pkt_entry->ep->base_ep.qp->qkey, pkt_entry,
+				 ibv_wc_read_byte_len(cq->ibv_cq_ex));
+		}
 		switch (opcode) {
 		case IBV_WC_SEND:
 #if ENABLE_DEBUG
