@@ -53,6 +53,7 @@ char remote_raw_addr[FT_MAX_CTRL_MSG];
 
 static bool shared_av = false;
 int num_avs;
+static time_t random_seed = -1;
 
 void close_client(int i);
 int open_client(int i);
@@ -205,13 +206,16 @@ static void *post_sends(void *context)
 	int sleep_time;
 	struct timespec ts = {0};
 	int num_transient_eps = 10;
+	int av_idx = 0;
+	int num_sends;
 
 	sleep_time = (rand() % (RANDOM_MAX - RANDOM_MIN + 1)) + RANDOM_MIN;
 	idx = ((struct thread_context *) context)->idx;
-	ts.tv_nsec = sleep_time;
+	av_idx = shared_av ? 0 : idx;
 
-	nanosleep(&ts, NULL);
-	len = opts.transfer_size;
+	random_sleep();
+
+	len = rand() % opts.transfer_size;
 	for (j = 0; j < num_transient_eps; j++) {
 		printf("Thread %d: opening client \n", idx);
 		ret = open_client(idx);
@@ -220,8 +224,9 @@ static void *post_sends(void *context)
 			return NULL;
 		}
 
-		for (i = 0; i < opts.iterations / num_transient_eps; i++) {
-			printf("Thread %d: post send for ep %d \n", idx, idx);
+		num_sends = opts.iterations / num_transient_eps;
+		printf("Thread %d: post %d sends for ep %d \n", num_sends, idx, idx);
+		for (i = 0; i < num_sends; i++) {
 			ret = ft_post_tx_buf(eps[idx], remote_fiaddr[idx], len, NO_CQ_DATA, &send_ctx[idx], send_bufs[idx], send_descs[idx], ft_tag);
 			if (ret) {
 				FT_PRINTERR("ft_post_tx_buf", ret);
@@ -259,7 +264,8 @@ static void *poll_tx_cq(void *context)
 		if (ret)
 			continue;
 		num_cqes++;
-		printf("Client: thread %d get %d completion from tx cq \n", i,
+		if (num_cqes % 100 == 0)
+			printf("Client: thread %d get %d completion from tx cq \n", i,
 		       num_cqes);
 		// This is the maximal number of sends client will do
 		if (num_cqes == num_eps * opts.iterations)
@@ -273,11 +279,13 @@ static int run_server(void)
 {
 	int i, ret;
 	int num_cqes = 0;
+	int num_recvs;
 
 	// posting enough recv buffers for each ep
 	// so the sent pkts can at least find a match
-	for (i = 0; i < opts.iterations * num_eps; i++) {
-		printf("Server: posting recv\n");
+	num_recvs = opts.iterations * num_eps;
+	printf("Server: posting %d recv\n", num_recvs);
+	for (i = 0; i < num_recvs; i++) {
 		ret = ft_post_rx_buf(ep, FI_ADDR_UNSPEC, opts.transfer_size, &rx_ctx, rx_buf, mr_desc, ft_tag);
 		if (ret) {
 			FT_PRINTERR("ft_post_rx_buf", ret);
@@ -300,7 +308,8 @@ static int run_server(void)
 		if (ret)
 			continue;
 		num_cqes++;
-		printf("Server: Get %d completions from rx cq\n", num_cqes);
+		if (num_cqes % 100 == 0)
+			printf("Server: Get %d completions from rx cq\n", num_cqes);
 		// This is the maximal number of sends client will do
 		if (num_cqes == num_eps * opts.iterations)
 			break;
@@ -488,6 +497,19 @@ static int run_test(void)
 	else
 		num_avs = num_eps;
 
+	if (random_seed != -1) {
+		printf("-------------------\n");
+		printf("Using random seed %ld\n", random_seed);
+		printf("-------------------\n");
+	} else {
+		random_seed = time(NULL);
+		printf("-------------------\n");
+		printf("Generated random seed %ld\n", random_seed);
+		printf("-------------------\n");
+	}
+
+	srand(random_seed);
+
 	opts.av_size = num_eps + 1;
 	ret = init_fabric();
 	if (ret)
@@ -529,7 +551,7 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 
 	while ((op = getopt_long(argc, argv,
-				 "c:hT:A" ADDR_OPTS INFO_OPTS CS_OPTS, long_opts,
+				 "c:hT:AN:" ADDR_OPTS INFO_OPTS CS_OPTS, long_opts,
 				 &lopt_idx)) != -1) {
 		switch (op) {
 		default:
@@ -547,6 +569,9 @@ int main(int argc, char **argv)
 			break;
 		case 'A':
 			shared_av = true;
+			break;
+		case 'N':
+			random_seed = atol(optarg);
 			break;
 		case '?':
 		case 'h':
