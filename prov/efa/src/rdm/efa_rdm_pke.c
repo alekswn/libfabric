@@ -23,6 +23,14 @@
 #include "efa_rdm_tracepoint.h"
 #include "efa_rdm_pke_print.h"
 
+#if ENABLE_DEBUG
+static inline void efa_rdm_pke_increment_gen(struct efa_rdm_pke *pkt_entry)
+{
+	pkt_entry->gen++;
+	pkt_entry->gen &= (EFA_RDM_BUFPOOL_ALIGNMENT - 1);
+}
+#endif
+
 /**
  * @brief allocate a packet entry
  *
@@ -45,12 +53,17 @@ struct efa_rdm_pke *efa_rdm_pke_alloc(struct efa_rdm_ep *ep,
 	if (!pkt_entry)
 		return NULL;
 
-	efa_rdm_poison_mem_region(pkt_entry, pkt_pool->attr.size);
-	dlist_init(&pkt_entry->entry);
-
 #if ENABLE_DEBUG
+	/* Restore pkt_entry->gen after poisoning. Otherwise, all pkts will have
+	 * the same gen when poisoning is enabled. */
+	uint8_t gen = pkt_entry->gen;
+	efa_rdm_poison_mem_region(pkt_entry, pkt_pool->attr.size);
+	pkt_entry->gen = gen;
+
 	dlist_init(&pkt_entry->dbg_entry);
 #endif
+
+	dlist_init(&pkt_entry->entry);
 	/* Initialize necessary fields in pkt_entry.
 	 * The memory region allocated by ofi_buf_alloc_ex is not initalized.
 	 */
@@ -423,7 +436,13 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 		pkt_entry = pkt_entry_vec[pkt_idx];
 		assert(pkt_entry->peer == peer);
 
-		qp->ibv_qp_ex->wr_id = (uintptr_t)pkt_entry;
+		qp->ibv_qp_ex->wr_id = (uintptr_t) pkt_entry;
+
+#if ENABLE_DEBUG
+		efa_rdm_pke_increment_gen(pkt_entry);
+		qp->ibv_qp_ex->wr_id += pkt_entry->gen;
+#endif
+
 		if ((pkt_entry->ope->fi_flags & FI_REMOTE_CQ_DATA) &&
 		    (pkt_entry->flags & EFA_RDM_PKE_SEND_TO_USER_RECV_QP)) {
 			/* Currently this is only expected for eager pkts */
@@ -528,7 +547,14 @@ int efa_rdm_pke_read(struct efa_rdm_pke *pkt_entry,
 
 	qp = ep->base_ep.qp;
 	efa_qp_wr_start(qp);
-	qp->ibv_qp_ex->wr_id = (uintptr_t)pkt_entry;
+
+	qp->ibv_qp_ex->wr_id = (uintptr_t) pkt_entry;
+
+#if ENABLE_DEBUG
+		efa_rdm_pke_increment_gen(pkt_entry);
+		qp->ibv_qp_ex->wr_id += pkt_entry->gen;
+#endif
+
 	efa_qp_wr_rdma_read(qp, remote_key, remote_buf);
 
 	sge.addr = (uint64_t)local_buf;
@@ -618,7 +644,13 @@ int efa_rdm_pke_write(struct efa_rdm_pke *pkt_entry)
 		efa_qp_wr_start(qp);
 		ep->base_ep.is_wr_started = true;
 	}
-	qp->ibv_qp_ex->wr_id = (uintptr_t)pkt_entry;
+
+	qp->ibv_qp_ex->wr_id = (uintptr_t) pkt_entry;
+
+#if ENABLE_DEBUG
+		efa_rdm_pke_increment_gen(pkt_entry);
+		qp->ibv_qp_ex->wr_id += pkt_entry->gen;
+#endif
 
 	if (txe->fi_flags & FI_REMOTE_CQ_DATA) {
 		/* assert that we are sending the entire buffer as a
@@ -687,7 +719,12 @@ ssize_t efa_rdm_pke_recvv(struct efa_rdm_pke **pke_vec,
 
 	for (i = 0; i < pke_cnt; ++i) {
 		recv_wr = &ep->base_ep.efa_recv_wr_vec[i];
-		recv_wr->wr.wr_id = (uintptr_t)pke_vec[i];
+		recv_wr->wr.wr_id = (uintptr_t) pke_vec[i];
+
+#if ENABLE_DEBUG
+		efa_rdm_pke_increment_gen(pke_vec[i]);
+		recv_wr->wr.wr_id += pke_vec[i]->gen;
+#endif
 		recv_wr->wr.num_sge = 1;
 		recv_wr->wr.sg_list = recv_wr->sge;
 		recv_wr->wr.sg_list[0].length = pke_vec[i]->pkt_size;

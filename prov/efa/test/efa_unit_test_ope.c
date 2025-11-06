@@ -243,8 +243,12 @@ void test_efa_rdm_ope_post_write_0_byte(struct efa_resource **state)
 	struct efa_unit_test_buff local_buff;
 	struct efa_ep_addr raw_addr;
 	struct efa_rdm_ope mock_txe;
+	struct efa_rdm_cq *efa_rdm_cq;
+	struct efa_ibv_cq *ibv_cq;
 	size_t raw_addr_len = sizeof(raw_addr);
 	fi_addr_t addr;
+	uint64_t wr_id;
+	struct efa_rdm_pke *pkt_entry;
 	int ret, err;
 
 	efa_unit_test_resource_construct(resource, FI_EP_RDM, EFA_FABRIC_NAME);
@@ -285,7 +289,13 @@ void test_efa_rdm_ope_post_write_0_byte(struct efa_resource **state)
 	assert_int_equal(err, 0);
 	assert_int_equal(g_ibv_submitted_wr_id_cnt, 1);
 
-	efa_rdm_pke_release_tx((struct efa_rdm_pke *)g_ibv_submitted_wr_id_vec[0]);
+	wr_id = (uint64_t) g_ibv_submitted_wr_id_vec[0];
+
+	efa_rdm_cq = container_of(resource->cq, struct efa_rdm_cq, efa_cq.util_cq.cq_fid.fid);
+	ibv_cq = &efa_rdm_cq->efa_cq.ibv_cq;
+	pkt_entry = efa_rdm_cq_get_pke_from_wr_id(ibv_cq, wr_id);
+
+	efa_rdm_pke_release_tx(pkt_entry);
 	mock_txe.ep->efa_outstanding_tx_ops = 0;
 	efa_unit_test_buff_destruct(&local_buff);
 }

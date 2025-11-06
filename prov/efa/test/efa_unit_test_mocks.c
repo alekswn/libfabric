@@ -70,8 +70,21 @@ void efa_mock_efa_qp_wr_send_verify_handshake_pkt_local_host_id_and_save_wr(stru
 	struct efa_rdm_pke* pke;
 	struct efa_rdm_base_hdr *efa_rdm_base_hdr;
 	uint64_t *host_id_ptr;
+	uint64_t wr_id = qp->ibv_qp_ex->wr_id;
 
-	pke = (struct efa_rdm_pke *)qp->ibv_qp_ex->wr_id;
+	/* Duplicate the logic from efa_rdm_cq_get_pke_from_wr_id and assume the
+	 * completion is not from an unsolicited write recv. This function is
+	 * mocking efa_qp_wr_send, so it cannot accept the CQ or the resource as
+	 * an input parameter */
+#if ENABLE_DEBUG
+	uint8_t gen = wr_id & (EFA_RDM_BUFPOOL_ALIGNMENT - 1);
+	wr_id &= ~(EFA_RDM_BUFPOOL_ALIGNMENT - 1);
+	pke = (struct efa_rdm_pke *) wr_id;
+	assert(pke->gen == gen);
+#else
+	pke = (struct efa_rdm_pke *) wr_id;
+#endif
+
 	efa_rdm_base_hdr = efa_rdm_pke_get_base_hdr(pke);
 
 	assert_int_equal(efa_rdm_base_hdr->type, EFA_RDM_HANDSHAKE_PKT);
