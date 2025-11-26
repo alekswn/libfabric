@@ -206,7 +206,6 @@ static void *post_sends(void *context)
 	struct timespec ts = {0};
 	int num_transient_eps = 10;
 
-	srand(time(NULL));
 	sleep_time = (rand() % (RANDOM_MAX - RANDOM_MIN + 1)) + RANDOM_MIN;
 	idx = ((struct thread_context *) context)->idx;
 	ts.tv_nsec = sleep_time;
