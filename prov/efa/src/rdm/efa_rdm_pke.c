@@ -439,7 +439,6 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 		qp->ibv_qp_ex->wr_id = (uintptr_t) pkt_entry;
 
 #if ENABLE_DEBUG
-		efa_rdm_pke_increment_gen(pkt_entry);
 		qp->ibv_qp_ex->wr_id += pkt_entry->gen;
 #endif
 
@@ -551,7 +550,6 @@ int efa_rdm_pke_read(struct efa_rdm_pke *pkt_entry,
 	qp->ibv_qp_ex->wr_id = (uintptr_t) pkt_entry;
 
 #if ENABLE_DEBUG
-		efa_rdm_pke_increment_gen(pkt_entry);
 		qp->ibv_qp_ex->wr_id += pkt_entry->gen;
 #endif
 
@@ -648,7 +646,6 @@ int efa_rdm_pke_write(struct efa_rdm_pke *pkt_entry)
 	qp->ibv_qp_ex->wr_id = (uintptr_t) pkt_entry;
 
 #if ENABLE_DEBUG
-		efa_rdm_pke_increment_gen(pkt_entry);
 		qp->ibv_qp_ex->wr_id += pkt_entry->gen;
 #endif
 
@@ -722,7 +719,6 @@ ssize_t efa_rdm_pke_recvv(struct efa_rdm_pke **pke_vec,
 		recv_wr->wr.wr_id = (uintptr_t) pke_vec[i];
 
 #if ENABLE_DEBUG
-		efa_rdm_pke_increment_gen(pke_vec[i]);
 		recv_wr->wr.wr_id += pke_vec[i]->gen;
 #endif
 		recv_wr->wr.num_sge = 1;
