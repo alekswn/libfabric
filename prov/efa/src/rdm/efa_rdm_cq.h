@@ -27,12 +27,14 @@ static inline struct efa_rdm_pke *efa_rdm_cq_get_pke_from_wr_id(struct efa_ibv_c
 #if ENABLE_DEBUG
 	if (!efa_cq_wc_is_unsolicited(ibv_cq)) {
 		uint8_t gen = wr_id & (EFA_RDM_BUFPOOL_ALIGNMENT - 1);
-		wr_id &= ~(EFA_RDM_BUFPOOL_ALIGNMENT - 1);
+		wr_id &= ~((uint64_t)EFA_RDM_BUFPOOL_ALIGNMENT - 1);
 		pkt_entry = (struct efa_rdm_pke *) wr_id;
 		// assert(pkt_entry->gen == gen);
 		if (pkt_entry->gen != gen) {
 			EFA_WARN(FI_LOG_CQ, "Received packet from wrong generation! pkt_entry %p expected gen %d received gen %d\n", pkt_entry, pkt_entry->gen, gen);
 		}
+		pkt_entry->gen++;
+		pkt_entry->gen &= (EFA_RDM_BUFPOOL_ALIGNMENT - 1);
 	}
 #else
 	pkt_entry = (struct efa_rdm_pke *) wr_id;
