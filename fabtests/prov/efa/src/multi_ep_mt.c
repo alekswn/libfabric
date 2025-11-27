@@ -58,8 +58,10 @@ static time_t random_seed = -1;
 void close_client(int i);
 int open_client(int i);
 
-#define RANDOM_MIN 0
-#define RANDOM_MAX 999999999
+// Sleep value range must be ((power of 2) - 1) to have unbiased distribution of sleeps.
+// An another constarian is 999999999 max value for tv_nsec 
+#define RANDOM_SLEEP_MAX ((1U<<29)-1)
+#define RANDOM_STATE_SIZE (8)
 
 struct thread_context {
 	int idx;
@@ -198,24 +200,74 @@ static int get_one_comp(struct fid_cq *cq)
 	return FI_SUCCESS;
 }
 
+
+static inline int init_random_data(struct random_data *restrict random_data, int idx) {
+	static _Thread_local char random_state[RANDOM_STATE_SIZE];
+	return initstate_r(random_seed+idx, random_state, sizeof random_state, random_data);
+}
+
+static inline int random_sleep(struct random_data *restrict random_data)
+{
+	int32_t sleep_time;
+	struct timespec rem, ts = {0};
+	int ret;
+
+	ret = random_r(random_data, &sleep_time);
+	if (ret) return ret;
+	ts.tv_nsec = sleep_time & RANDOM_SLEEP_MAX;
+	while(ts.tv_nsec > 0) {
+		ret = nanosleep(&ts, &rem);
+		if (ret == 0 || errno != EINTR)
+			return ret;
+		ts = rem;
+	};
+
+	return 0;
+}
+
+static inline int random_length(struct random_data *restrict random_data, size_t max_length, size_t *restrict len)
+{
+	assert(max_length < (size_t)INT32_MAX);
+	
+	const int32_t rejection_limit = INT32_MAX - (INT32_MAX % ((int32_t)max_length + 1));
+	
+	int32_t result;
+	int ret;
+
+	do {
+		ret = random_r(random_data, &result);
+		if (ret) return ret;
+	} while (result >= rejection_limit);
+	*len = result % (max_length + 1);
+	return 0;
+}
+
 static void *post_sends(void *context)
 {
 	int idx, ret, i, j;
 	size_t len;
-	// the range of the sleep time (in nanoseconds)
-	int sleep_time;
-	struct timespec ts = {0};
 	int num_transient_eps = 10;
-	int av_idx = 0;
 	int num_sends;
+	struct random_data random_data = {0};
 
-	sleep_time = (rand() % (RANDOM_MAX - RANDOM_MIN + 1)) + RANDOM_MIN;
 	idx = ((struct thread_context *) context)->idx;
-	av_idx = shared_av ? 0 : idx;
+	ret = init_random_data(&random_data, idx);
+	if (ret) {
+		FT_PRINTERR("init_random_data failed!\n", errno);
+		return NULL;
+	}
 
-	random_sleep();
+	ret = random_sleep(&random_data);
+	if (ret) {
+		FT_PRINTERR("random_sleep failed!\n", errno);
+		return NULL;
+	}
 
-	len = rand() % opts.transfer_size;
+	ret = random_length(&random_data, opts.transfer_size, &len);
+	if (ret) {
+		FT_PRINTERR("random_length failed!\n", errno);
+		return NULL;
+	}
 	for (j = 0; j < num_transient_eps; j++) {
 		printf("Thread %d: opening client \n", idx);
 		ret = open_client(idx);
@@ -233,10 +285,12 @@ static void *post_sends(void *context)
 				return NULL;
 			}
 		}
-
-		sleep_time = (rand() % (RANDOM_MAX - RANDOM_MIN + 1)) + RANDOM_MIN;
-		ts.tv_nsec = sleep_time;
-		nanosleep(&ts, NULL);
+	
+		ret = random_sleep(&random_data);
+		if (ret) {
+			FT_PRINTERR("random_sleep failed!\n", errno);
+			return NULL;
+		}
 
 		// exit
 		printf("Thread %d: closing client\n", idx);
@@ -507,8 +561,7 @@ static int run_test(void)
 		printf("Generated random seed %ld\n", random_seed);
 		printf("-------------------\n");
 	}
-
-	srand(random_seed);
+	fflush(NULL); // make sure random seed is printed to terminal
 
 	opts.av_size = num_eps + 1;
 	ret = init_fabric();
