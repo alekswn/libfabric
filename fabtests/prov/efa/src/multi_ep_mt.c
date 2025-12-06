@@ -62,6 +62,7 @@ int open_client(int i);
 // An another constarian is 999999999 max value for tv_nsec 
 #define RANDOM_SLEEP_MAX ((1U<<29)-1)
 #define RANDOM_STATE_SIZE (8)
+#define TAG (18446744073709551615ULL)
 
 struct thread_context {
 	int idx;
@@ -225,27 +226,10 @@ static inline int random_sleep(struct random_data *restrict random_data)
 	return 0;
 }
 
-static inline int random_length(struct random_data *restrict random_data, size_t max_length, size_t *restrict len)
-{
-	assert(max_length < (size_t)INT32_MAX);
-	
-	const int32_t rejection_limit = INT32_MAX - (INT32_MAX % ((int32_t)max_length + 1));
-	
-	int32_t result;
-	int ret;
-
-	do {
-		ret = random_r(random_data, &result);
-		if (ret) return ret;
-	} while (result >= rejection_limit);
-	*len = result % (max_length + 1);
-	return 0;
-}
-
 static void *post_sends(void *context)
 {
 	int idx, ret, i, j;
-	size_t len;
+	const size_t len = opts.transfer_size;
 	int num_transient_eps = 10;
 	int num_sends;
 	struct random_data random_data = {0};
@@ -263,11 +247,6 @@ static void *post_sends(void *context)
 		return NULL;
 	}
 
-	ret = random_length(&random_data, opts.transfer_size, &len);
-	if (ret) {
-		FT_PRINTERR("random_length failed!\n", errno);
-		return NULL;
-	}
 	for (j = 0; j < num_transient_eps; j++) {
 		printf("Thread %d: opening client \n", idx);
 		ret = open_client(idx);
@@ -602,6 +581,7 @@ int main(int argc, char **argv)
 	hints = fi_allocinfo();
 	if (!hints)
 		return EXIT_FAILURE;
+	ft_tag = TAG;
 
 	while ((op = getopt_long(argc, argv,
 				 "c:hT:AN:" ADDR_OPTS INFO_OPTS CS_OPTS, long_opts,
@@ -644,7 +624,7 @@ int main(int argc, char **argv)
 		opts.dst_addr = argv[optind];
 
 	opts.threading = FI_THREAD_SAFE;
-	hints->caps = FI_MSG | FI_RMA;
+	hints->caps = FI_MSG | FI_RMA | FI_TAGGED;
 	hints->mode = FI_CONTEXT | FI_CONTEXT2;
 	hints->domain_attr->mr_mode = opts.mr_mode;
 	hints->addr_format = opts.address_format;
