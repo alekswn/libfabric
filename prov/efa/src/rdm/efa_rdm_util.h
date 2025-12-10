@@ -23,7 +23,7 @@ int efa_rdm_construct_msg_with_local_and_peer_information(struct efa_rdm_ep *ep,
 
 int efa_rdm_write_error_msg(struct efa_rdm_ep *ep, struct efa_rdm_peer *peer, int prov_errno, char *err_msg, size_t *buflen);
 
-static inline void efa_rdm_poison_mem_region(void *ptr, size_t size)
+static inline void efa_rdm_poison_mem_region(volatile void *ptr, size_t size)
 {
 	uint32_t efa_rdm_poison_value = 0xdeadbeef;
 	for (int i = 0; i < size / sizeof(efa_rdm_poison_value); i++)
