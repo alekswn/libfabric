@@ -740,6 +740,7 @@ enum ibv_wc_status efa_rdm_cq_process_wc(struct efa_ibv_cq *cq, struct efa_rdm_e
 				"Unhandled cq type\n");
 			assert(0 && "Unhandled cq type");
 		}
+		efa_rdm_poison_mem_region(wiredata, ofi_buf_pool(pkt_entry)->attr.size - sizeof(struct efa_rdm_pke));
 	}
 	return status;
 }
