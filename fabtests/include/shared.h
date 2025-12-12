@@ -44,6 +44,9 @@
 #include <getopt.h>
 #include <assert.h>
 #include <complex.h>
+#include <stdatomic.h>
+#include <stdint.h>
+
 
 #include <rdma/fabric.h>
 #include <rdma/fi_rma.h>
@@ -254,7 +257,8 @@ extern int timeout;
 extern struct fi_context2 tx_ctx, rx_ctx;
 extern uint64_t remote_cq_data;
 
-extern uint64_t tx_seq, rx_seq, tx_cq_cntr, rx_cq_cntr;
+extern atomic_uintmax_t tx_seq, rx_seq;
+extern uint64_t tx_cq_cntr, rx_cq_cntr;
 extern struct fi_av_attr av_attr;
 extern struct fi_eq_attr eq_attr;
 extern struct fi_cq_attr cq_attr;

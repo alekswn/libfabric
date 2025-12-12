@@ -77,7 +77,8 @@ struct fi_context2 tx_ctx, rx_ctx;
 struct ft_context *tx_ctx_arr = NULL, *rx_ctx_arr = NULL;
 uint64_t remote_cq_data = 0;
 
-uint64_t tx_seq, rx_seq, tx_cq_cntr, rx_cq_cntr;
+atomic_uintmax_t tx_seq, rx_seq;
+uint64_t tx_cq_cntr, rx_cq_cntr;
 int (*ft_mr_alloc_func)(void);
 uint64_t ft_tag = 0;
 int ft_parent_proc = 0;
@@ -2195,7 +2196,6 @@ int ft_progress(struct fid_cq *cq, uint64_t total, uint64_t *cq_cntr)
 
 #define FT_POST(post_fn, progress_fn, cq, seq, cq_cntr, op_str, ...)		\
 	do {									\
-		int timeout_save;						\
 		int ret, rc;							\
 										\
 		while (1) {							\
@@ -2208,14 +2208,11 @@ int ft_progress(struct fid_cq *cq, uint64_t total, uint64_t *cq_cntr)
 				return ret;					\
 			}							\
 										\
-			timeout_save = timeout;					\
-			timeout = 0;						\
 			rc = progress_fn(cq, seq, cq_cntr);			\
 			if (rc && rc != -FI_EAGAIN) {				\
 				FT_ERR("Failed to get " op_str " completion");	\
 				return rc;					\
 			}							\
-			timeout = timeout_save;					\
 		}								\
 		seq++;								\
 	} while (0)
