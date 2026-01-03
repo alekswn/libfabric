@@ -391,7 +391,7 @@ static int efa_mr_dereg_impl(struct efa_mr *efa_mr)
 	struct efa_domain *efa_domain;
 	int ret = 0;
 	int err;
-	size_t ibv_mr_size;
+	size_t ibv_mr_size, reg_ct, reg_sz;
 
 	efa_domain = efa_mr->domain;
 	if (efa_mr->ibv_mr) {
@@ -402,10 +402,10 @@ static int efa_mr_dereg_impl(struct efa_mr *efa_mr)
 				"Unable to deregister memory registration\n");
 			ret = err;
 		} else {
-			efa_mr->domain->ibv_mr_reg_ct--;
-			efa_mr->domain->ibv_mr_reg_sz -= ibv_mr_size;
+			reg_ct = ofi_atomic_dec_counter(&efa_mr->domain->ibv_mr_reg_ct);
+			reg_sz = ofi_atomic_sub_counter(&efa_mr->domain->ibv_mr_reg_sz, ibv_mr_size);
 			EFA_INFO(FI_LOG_MR, "Deregistered memory of size %zu for ibv pd %p, total mr reg size %zu, mr reg count %zu\n",
-				 efa_mr->ibv_mr->length, efa_mr->domain->ibv_pd, efa_mr->domain->ibv_mr_reg_sz, efa_mr->domain->ibv_mr_reg_ct);
+				 efa_mr->ibv_mr->length, efa_mr->domain->ibv_pd, reg_sz, reg_ct);
 		}
 	}
 
@@ -793,6 +793,7 @@ static int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const void *at
 	struct fi_mr_attr mr_attr = {0};
 	int fi_ibv_access = 0;
 	uint64_t shm_flags;
+	size_t reg_sz, reg_ct;
 	int ret = 0;
 
 	efa_mr->ibv_mr = NULL;
@@ -859,8 +860,8 @@ static int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const void *at
 					 mr_attr.mr_iov->iov_len,
 				 fi_strerror(-errno), flags,
 				 efa_mr->domain->ibv_pd,
-				 efa_mr->domain->ibv_mr_reg_sz,
-				 efa_mr->domain->ibv_mr_reg_ct);
+				 ofi_atomic_get_counter(&efa_mr->domain->ibv_mr_reg_sz),
+				 ofi_atomic_get_counter(&efa_mr->domain->ibv_mr_reg_ct));
 			if (efa_mr->peer.iface == FI_HMEM_CUDA &&
 			    (efa_mr->peer.flags & OFI_HMEM_DATA_DEV_REG_HANDLE)) {
 				assert(efa_mr->peer.hmem_data);
@@ -869,16 +870,16 @@ static int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const void *at
 
 			return -errno;
 		}
-		efa_mr->domain->ibv_mr_reg_ct++;
-		efa_mr->domain->ibv_mr_reg_sz += efa_mr->ibv_mr->length;
+		reg_ct = ofi_atomic_inc_counter(&efa_mr->domain->ibv_mr_reg_ct);
+		reg_sz = ofi_atomic_add_counter(&efa_mr->domain->ibv_mr_reg_sz, efa_mr->ibv_mr->length);
 		EFA_INFO(FI_LOG_MR,
 			 "Registered memory at %p of size %zu"
 			 "flags %ld for ibv pd %p, "
 			 "total mr reg size %zu, mr reg count %zu\n",
 			 efa_mr->ibv_mr->addr, efa_mr->ibv_mr->length,
 			 flags, efa_mr->domain->ibv_pd,
-			 efa_mr->domain->ibv_mr_reg_sz,
-			 efa_mr->domain->ibv_mr_reg_ct);
+			 reg_sz,
+			 reg_ct);
 		efa_mr->mr_fid.key = efa_mr->ibv_mr->rkey;
 	}
 	efa_mr->mr_fid.mem_desc = efa_mr;
