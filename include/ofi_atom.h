@@ -71,6 +71,11 @@ typedef atomic_int_least64_t	ofi_atomic_int64_t;
 typedef atomic_int	ofi_atomic_int32_t;
 typedef atomic_long	ofi_atomic_int64_t;
 #endif
+#ifdef HAVE_ATOMIC_SIZE_T
+typedef atomic_size_t	ofi_atomic_size_t;
+#else
+typedef atomic_ulong	ofi_atomic_size_t;
+#endif
 
 #define OFI_ATOMIC_DEFINE(radix)									\
 	typedef struct {										\
@@ -187,6 +192,48 @@ typedef atomic_long	ofi_atomic_int64_t;
 		return atomic_load_explicit(&atomic->val, memmodel);					\
 	}
 
+#define OFI_ATOMIC_DEFINE_COUNTER									\
+	typedef struct {										\
+		ofi_atomic_size_t val;									\
+		ATOMIC_DEF_INIT;									\
+	} ofi_atomic_counter;										\
+	static inline											\
+	size_t ofi_atomic_get_counter(ofi_atomic_counter *atomic)					\
+	{												\
+		ATOMIC_IS_INITIALIZED(atomic);								\
+		return (size_t)atomic_load_explicit(&atomic->val, memory_order_relaxed);		\
+	}												\
+	static inline											\
+	void ofi_atomic_initialize_counter(ofi_atomic_counter *atomic, size_t value)			\
+	{												\
+		atomic_init(&atomic->val, value);							\
+		ATOMIC_INIT(atomic);									\
+	}												\
+	static inline											\
+	size_t ofi_atomic_add_counter(ofi_atomic_counter *atomic, size_t val)				\
+	{												\
+		ATOMIC_IS_INITIALIZED(atomic);								\
+		return (size_t)atomic_fetch_add_explicit(&atomic->val, val,				\
+								 memory_order_relaxed) + val;		\
+	}												\
+	static inline											\
+	size_t ofi_atomic_sub_counter(ofi_atomic_counter *atomic, size_t val)				\
+	{												\
+		ATOMIC_IS_INITIALIZED(atomic);								\
+		return (size_t)atomic_fetch_sub_explicit(&atomic->val, val,				\
+								 memory_order_relaxed) - val;		\
+	}												\
+	static inline											\
+	size_t ofi_atomic_inc_counter(ofi_atomic_counter *atomic)					\
+	{												\
+		return ofi_atomic_add_counter(atomic, 1);						\
+	}												\
+	static inline											\
+	size_t ofi_atomic_dec_counter(ofi_atomic_counter *atomic)					\
+	{												\
+		return ofi_atomic_sub_counter(atomic, 1);						\
+	}												\
+
 #elif defined HAVE_BUILTIN_ATOMICS
 #  if ENABLE_DEBUG
 #    define ATOMIC_T(radix)		\
@@ -194,7 +241,6 @@ typedef atomic_long	ofi_atomic_int64_t;
 		int##radix##_t val;	\
 		ATOMIC_DEF_INIT;	\
 	}
-
 #    define ofi_atomic_ptr(atomic) (&((atomic)->val))
 #  else
 #    define ATOMIC_T(radix) int##radix##_t
@@ -289,6 +335,67 @@ typedef atomic_long	ofi_atomic_int64_t;
 	{												\
 		return ofi_atomic_load_explicit(radix, ofi_atomic_ptr(atomic), memmodel);		\
 	}
+
+#define OFI_ATOMIC_DEFINE_COUNTER									\
+	typedef ATOMIC_T(64) ofi_atomic_counter;							\
+	static inline											\
+	size_t ofi_atomic_get_counter(ofi_atomic_counter *atomic)					\
+	{												\
+		ATOMIC_IS_INITIALIZED(atomic);								\
+		const int64_t raw = *ofi_atomic_ptr(atomic);						\
+		assert(raw >= 0);									\
+		return (size_t)raw;									\
+	}												\
+	static inline											\
+	void ofi_atomic_initialize_counter(ofi_atomic_counter *atomic, size_t value)			\
+	{												\
+		assert(value <= INT64_MAX);								\
+		*(ofi_atomic_ptr(atomic)) = (int64_t)value;							\
+		ATOMIC_INIT(atomic);									\
+	}												\
+	static inline											\
+	size_t ofi_atomic_add_counter(ofi_atomic_counter *atomic, size_t val)				\
+	{												\
+		/* Use compare-and-swap to avoid overflow */						\
+		int64_t expected, desired;								\
+		uint64_t sum;										\
+		assert(val <= INT64_MAX);								\
+		ATOMIC_IS_INITIALIZED(atomic);								\
+		do {											\
+			expected = *ofi_atomic_ptr(atomic);						\
+			assert(expected < INT64_MAX);							\
+			sum = (uint64_t)expected + (uint64_t)val;					\
+			new_val = (int64_t)(sum & INT64_MAX);						\
+		} while(!ofi_atomic_cas_bool(radix, ofi_atomic_ptr(atomic), expected, desired));	\
+		return size_t(desired);									\
+	}												\
+	static inline											\
+	size_t ofi_atomic_sub_counter(ofi_atomic_counter *atomic, size_t val)				\
+	{												\
+		/* Use compare-and-swap to avoid overflow */						\
+		int64_t expected, desired;								\
+		uint64_t diff;										\
+		assert(val <= INT64_MAX);								\
+		ATOMIC_IS_INITIALIZED(atomic);								\
+		do {											\
+			expected = *ofi_atomic_ptr(atomic);						\
+			assert(expected < INT64_MAX);							\
+			/* Unsigned underflow is well-defined */					\
+			diff = (uint64_t)expected - (uint64_t)val;					\
+			new_val = (int64_t)(diff & INT64_MAX);						\
+		} while(!ofi_atomic_cas_bool(radix, ofi_atomic_ptr(atomic), expected, desired));	\
+		return size_t(desired);									\
+	}												\
+	static inline											\
+	size_t ofi_atomic_inc_counter(ofi_atomic_counter *atomic)					\
+	{												\
+		return ofi_atomic_add_counter(atomic, 1);						\
+	}												\
+	static inline											\
+	size_t ofi_atomic_dec_counter(ofi_atomic_counter *atomic)					\
+	{												\
+		return ofi_atomic_sub_counter(atomic, 1);						\
+	}												\
 
 #else /* HAVE_ATOMICS */
 
@@ -415,10 +522,63 @@ typedef atomic_long	ofi_atomic_int64_t;
 		return ofi_atomic_get##radix(atomic);						\
 	}											\
 
+#define OFI_ATOMIC_DEFINE_COUNTER								\
+	typedef	struct {									\
+		ofi_spin_t lock;								\
+		size_t val;									\
+		ATOMIC_DEF_INIT;								\
+	} ofi_atomic_counter;									\
+	static inline										\
+	size_t ofi_atomic_get_counter(ofi_atomic_counter *atomic)				\
+	{											\
+		ATOMIC_IS_INITIALIZED(atomic);							\
+		return atomic->val;								\
+	}											\
+	static inline										\
+	void ofi_atomic_initialize_counter(ofi_atomic_counter *atomic, size_t value)		\
+	{											\
+		ofi_spin_init(&atomic->lock);							\
+		atomic->val = value;								\
+		ATOMIC_INIT(atomic);								\
+	}											\
+	static inline										\
+	size_t ofi_atomic_add_counter(ofi_atomic_counter *atomic, size_t val)			\
+	{											\
+		size_t v;			i						\
+		ATOMIC_IS_INITIALIZED(atomic);							\
+		ofi_spin_lock(&atomic->lock);							\
+		atomic->val += val;								\
+		v = atomic->val;								\
+		ofi_spin_unlock(&atomic->lock);							\
+		return v;									\
+	}											\
+	static inline										\
+	size_t ofi_atomic_sub_counter(ofi_atomic_counter *atomic, size_t val)			\
+	{											\
+		size_t v;			i						\
+		ATOMIC_IS_INITIALIZED(atomic);							\
+		ofi_spin_lock(&atomic->lock);							\
+		atomic->val -= val;								\
+		v = atomic->val;								\
+		ofi_spin_unlock(&atomic->lock);							\
+		return v;									\
+	}											\
+	static inline										\
+	size_t ofi_atomic_inc_counter(ofi_atomic_counter *atomic)				\
+	{											\
+		return ofi_atomic_add_counter(atomic, 1);					\
+	}											\
+	static inline										\
+	size_t ofi_atomic_dec_counter(ofi_atomic_counter *atomic)				\
+	{											\
+		return ofi_atomic_sub_counter(atomic, 1);					\
+	}											\
+
 #endif // HAVE_ATOMICS
 
 OFI_ATOMIC_DEFINE(32)
 OFI_ATOMIC_DEFINE(64)
+OFI_ATOMIC_DEFINE_COUNTER
 
 #ifdef __cplusplus
 }

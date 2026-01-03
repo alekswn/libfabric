@@ -319,7 +319,16 @@ AS_IF([test x"$enable_atomics" != x"no"],
                       [Set to 1 to use c11 atomic `least` types])
         ],[
             AC_MSG_RESULT(no)
-        ]),
+        ])
+    AC_MSG_CHECKING(compiler support for c11 atomic_size_t type)
+    AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <stdatomic.h>]], [[atomic_size_t a;
+        ]])],[
+            AC_MSG_RESULT(yes)
+            AC_DEFINE(HAVE_ATOMIC_SIZE_T, 1,
+                      [Set to 1 to use c11 `atomic_size_t` type])
+        ],[
+            AC_MSG_RESULT(no)
+        ])
 [
     AC_MSG_RESULT(configure: atomics support for c11 is disabled)
 ])
