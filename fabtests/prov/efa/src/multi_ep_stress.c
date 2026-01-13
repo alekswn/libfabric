@@ -80,7 +80,7 @@ static struct option test_long_opts[] = {
 	{"op-type", required_argument, NULL, OPT_OP_TYPE},
 	{"random-seed", required_argument, NULL, OPT_RANDOM_SEED},
 	{0, 0, 0, 0}};
-#if 0
+
 // RMA information
 struct rma_info {
 	uint64_t remote_addr;
@@ -94,7 +94,7 @@ struct ep_info {
 	size_t addr_len;
 	struct rma_info rma;
 };
-
+#if 0
 // Worker status tracking
 struct worker_status {
        pthread_mutex_t mutex;
@@ -747,70 +747,32 @@ out:
 
 	return (void *) (intptr_t) ret;
 }
-
-static int notify_endpoint_update(struct receiver_context *ctx)
+#endif
+static int notify_endpoint_update(struct worker_context *ctx)
 {
 	struct ep_info msg = {0};
-	msg.worker_id = ctx->worker_id;
 
 	// Get endpoint address
 	msg.addr_len = MAX_EP_ADDR_LEN;
-	int ret = fi_getname(&ctx->common.ep->fid, msg.ep_addr,
-			     &msg.addr_len);
+	int ret = fi_getname(&ctx->ep->fid, msg.ep_addr, &msg.addr_len);
 	if (ret)
 		return ret;
 
 	// Fill RMA info
-	msg.rma.remote_addr = (uint64_t) ctx->rx_buf;
+	msg.rma.remote_addr = (uint64_t) ctx->buffer;
 	msg.rma.rkey = fi_mr_key(ctx->mr);
 
 	// Send to all connected senders
-	for (int i = 0; i < ctx->num_senders; i++) {
-		if (ctx->control_socks[i] < 0)
-			continue;
-
-		size_t sent = 0;
-		while (sent < sizeof(msg)) {
-			ret = send(ctx->control_socks[i], (char *) &msg + sent,
-				   sizeof(msg) - sent, 0);
-
-			if (ret < 0) {
-				if (errno == EAGAIN || errno == EWOULDBLOCK) {
-					// Would block, try again after small delay
-					usleep(1000); // 1ms delay
-					continue;
-				} else if (errno == EINTR) {
-					// Interrupted by signal, retry
-					// immediately
-					continue;
-				} else if (errno == ECONNRESET || errno == EPIPE) {
-					// Connection reset by peer - sender exited early
-					// This is allowed, just skip this sender
-					if (topts.verbose)
-						printf("Receiver %d: Sender %d disconnected\n",
-						       ctx->worker_id, i);
-					break;
-				} else {
-					// Real error
-					fprintf(stderr,
-						"Receiver %d: Failed to notify "
-						"sender %d: %s\n",
-						ctx->worker_id, i,
-						strerror(errno));
-					return -errno;
-				}
-			}
-			sent += ret;
-		}
-
+	for (int i = 0; i < ctx->num_peers; i++) {
+		msg.worker_id = ctx->peer_ids[i];
+		//TODO
 		if (topts.verbose)
-			printf("Receiver %d: Notified sender new EP\n",
-			       ctx->worker_id);
+			printf("Receiver %d: Notified sender %d about new EP\n",
+			       ctx->worker_id, msg.worker_id);
 	}
-
 	return 0;
 }
-#endif
+
 static void *run_receiver_worker(void *arg)
 {
 	struct worker_context *ctx = (struct worker_context *) arg;
@@ -833,7 +795,7 @@ static void *run_receiver_worker(void *arg)
 		ret = setup_endpoint(ctx);
 		if (ret)
 			break;
-#if 0
+
 		// Notify sender of new endpoint
 		ret = notify_endpoint_update(ctx);
 		if (ret < 0) {
@@ -841,10 +803,10 @@ static void *run_receiver_worker(void *arg)
 				"Receiver %d: Failed to notify endpoint update "
 				"for cycle %d: %d\n",
 				ctx->worker_id, cycle + 1, ret);
-			cleanup_endpoint(&ctx->common);
+			cleanup_endpoint(ctx);
 			goto out;
 		}
-#endif
+
 		// sleep random time up to 100ms to emulate the real workload
 		int sleep_time = ft_random_sleep_ms(&random_data, 100);
 		printf("Receiver %d: Sleeping for %d microseconds\n",
@@ -928,7 +890,7 @@ static void *run_receiver_worker(void *arg)
 			       ctx->worker_id, cycle + 1);
 		}
 #endif
-		printf("Receiver %d EP cycle %d: Completed %d receives from %d "
+		printf("Receiver %d EP cycle %d: Completed %d receives from %zu "
 		       "senders\n\n",
 		       ctx->worker_id, cycle + 1, completed, ctx->num_peers);
 
