@@ -100,7 +100,7 @@ struct worker_status {
        pthread_mutex_t mutex;
        atomic_flag *active;
 };
-
+#endif
 // Worker context structure
 struct worker_context {
 	int worker_id;
@@ -113,7 +113,7 @@ struct worker_context {
 	size_t num_peers;
 	int *peer_ids; // Store the indices of the remote workers it will talk to
 };
-
+#if 0
 // Sender context
 struct sender_context {
 	struct common_context common;
@@ -129,11 +129,11 @@ struct sender_context {
 	int *control_socks; // Array of control sockets for multiple receivers
 	struct worker_status status;
 };
-
+#endif
 struct fid_cq *shared_txcq, *shared_rxcq;
 struct fid_av *shared_txav, *shared_rxav;
+#if 0
 static pthread_mutex_t shared_cq_lock = PTHREAD_MUTEX_INITIALIZER;
-
 // Setup endpoint for a worker
 static int setup_endpoint(struct common_context *ctx)
 {
@@ -955,6 +955,30 @@ out:
 	printf("Receiver %d: Completed %d EP cycles\n", ctx->worker_id, cycle);
 	return (void *) (intptr_t) ret;
 }
+#endif
+static void cleanup_worker_resourses(struct worker_context *worker) {
+	if (worker->mr) {
+		fi_close(&worker->mr->fid);
+		worker->mr = NULL;
+	}
+	if (worker->fi_ctx) {
+		free(worker->fi_ctx);
+		worker->fi_ctx = NULL;
+	}
+	if (worker->buffer) {
+		free(worker->buffer);
+		worker->buffer = NULL;
+	}
+	if (worker->peer_ids) {
+		free(worker->peer_ids);
+		worker->peer_ids = NULL;
+		worker->num_peers = 0;
+	}
+	if (!topts.shared_av && worker->av) {
+		fi_close(&worker->av->fid);
+		worker->av = NULL;
+	}	
+}
 
 // Common function for buffer and MR setup
 static int setup_worker_resources(struct worker_context* worker, uint64_t access,
@@ -967,31 +991,31 @@ static int setup_worker_resources(struct worker_context* worker, uint64_t access
 			     buffer_multiplier;
 	worker->buffer = calloc(1, buffer_size);
 	if (!worker->buffer) {
-		return -FI_ENOMEM;
+		ret =-FI_ENOMEM;
+		goto error;
 	}
 
 	// Allocate context array
 	worker->fi_ctx = calloc(topts.msgs_per_endpoint, sizeof(struct fi_context));
 	if (!worker->fi_ctx) {
-		free(worker->buffer);
-		worker->buffer = NULL;
-		return -FI_ENOMEM;
+		ret = -FI_ENOMEM;
+		goto error;
 	}
 
 	// Register memory region
-	ret = fi_mr_reg(domain, worker->buffer, buffer_size, access, 0, 0, 0, mr, NULL);
+	ret = fi_mr_reg(domain, worker->buffer, buffer_size, access, 0, 0, 0, &worker->mr, NULL);
 	if (ret) {
 		FT_PRINTERR("fi_mr_reg", ret);
-		free(worker->fi_ctx);
-		free(worker->buffer);
-		worker->buffer = NULL;
-		worker->fi_ctx = NULL;
-		return ret;
+		goto error;
 	}
 
 	return 0;
+error:
+	cleanup_worker_resourses(worker);
+	return ret;
 }
 
+#if 0
 static int run_sender(void)
 {
 	int ret, offset;
@@ -1216,13 +1240,13 @@ out:
 	free(threads);
 	return ret;
 }
+#endif // if 0
 
 static int run_receiver(void)
 {
-	int ret, offset;
+	int ret;
 	struct worker_context *workers;
 	pthread_t *threads;
-
 
 	workers = calloc(topts.num_receiver_workers, sizeof(*workers));
 	threads = calloc(topts.num_receiver_workers, sizeof(*threads));
@@ -1260,18 +1284,18 @@ static int run_receiver(void)
 	for (int i = 0; i < topts.num_receiver_workers; i++) {
 		workers[i].worker_id = i;
 
-		// Calculate number of senders this receiver talks to
 		if (topts.num_sender_workers <= topts.num_receiver_workers) {
-			// Each receiver talks to one sender
+			// Each receiver connects to one sender
 			workers[i].num_peers = 1;
+			workers[i].peer_ids = malloc(sizeof(int));
+			*workers[i].peer_ids = i % topts.num_sender_workers;
 		} else {
 			// Multiple senders may send to this receiver
-			int count = 0;
-			for (int j = i; j < topts.num_sender_workers;
-			     j += topts.num_receiver_workers) {
-				count++;
+			workers[i].num_peers = (topts.num_sender_workers - i - 1) / topts.num_receiver_workers + 1;
+			workers[i].peer_ids = malloc(workers[i].num_peers * sizeof(int));
+			for (int j = 0; j < workers[i].num_peers; j++) {
+				workers[i].peer_ids[j] = i + j * topts.num_receiver_workers;
 			}
-			workers[i].num_peers = count;
 		}
 
 		// Setup common resources
@@ -1282,39 +1306,13 @@ static int run_receiver(void)
 
 		if (topts.verbose) {
 			printf("\nReceiver Worker %d:\n", i);
-			printf("  - Connected by senders: ");
-			if (topts.num_sender_workers <= topts.num_receiver_workers) {
-				printf("%d ", i % topts.num_sender_workers);
-			} else {
-				for (int j = i; j < topts.num_sender_workers; j += topts.num_receiver_workers)
-					printf("%d ", j);
-			}
+  	                printf("  - Connected by senders: ");
+			for (int j = 0; j < workers[i].num_peers; j++)
+				printf("%d ", workers[i].peer_ids[j]);
 			printf("\n");
 		}
-
-		int sender_count = (topts.num_sender_workers <=
-				    topts.num_receiver_workers) ?
-					   1 :
-					   workers[i].num_senders;
-		for (int j = 0; j < sender_count; j++) {
-			int sender_idx;
-			if (topts.num_sender_workers <= topts.num_receiver_workers) {
-				// Each receiver connects to one sender
-				sender_idx = i % topts.num_sender_workers;
-			} else {
-				// Multiple senders connect to this receiver
-				sender_idx = i + j * topts.num_receiver_workers;
-				if (sender_idx >= topts.num_sender_workers)
-					break;
-			}
-			if (topts.verbose) {
-				printf("Receiver %d connecting to sender %d", i, sender_idx);
-			}
-
-			sock_idx++;
-		}
 	}
-
+#if 0
 	// Create worker threads
 	for (int i = 0; i < topts.num_receiver_workers; i++) {
 		ret = pthread_create(&threads[i], NULL, run_receiver_worker,
@@ -1329,33 +1327,25 @@ static int run_receiver(void)
 	for (int i = 0; i < topts.num_receiver_workers; i++) {
 		pthread_join(threads[i], NULL);
 	}
-
+#endif
 out:
-	if (workers) {
-		if (topts.shared_av && shared_rxav) {
-			fi_close(&shared_rxav->fid);
-		}
-		if (topts.shared_cq && shared_rxcq) {
-			fi_close(&shared_rxcq->fid);
-		}
-		for (int i = 0; i < topts.num_receiver_workers; i++) {
-			if (workers[i].mr)
-				fi_close(&workers[i].mr->fid);
-			if (!topts.shared_av && workers[i].common.av) {
-				fi_close(&workers[i].common.av->fid);
-				workers[i].common.av = NULL;
-			}
-			free(workers[i].rx_buf);
-			free(workers[i].rx_ctx);
-		}
+	if (topts.shared_av && shared_rxav) {
+		fi_close(&shared_rxav->fid);
 	}
-	if (control_socket >= 0)
-		close(control_socket);
-	free(workers);
-	free(threads);
+	if (topts.shared_cq && shared_rxcq) {
+		fi_close(&shared_rxcq->fid);
+	}
+	if (workers) {
+		for (int i = 0; i < topts.num_receiver_workers; i++) {
+			cleanup_worker_resourses(&workers[i]);
+		}
+		free(workers);
+	}
+	if (threads)
+		free(threads);
 	return ret;
 }
-#endif
+
 static int run_test(void)
 {
 	int ret;
@@ -1374,14 +1364,14 @@ static int run_test(void)
 	ret = ft_init_fabric();
 	if (ret)
 		return ret;
-#if 0
 	// Run as sender or receiver based on dst_addr
 	if (opts.dst_addr) {
+#if 0
 		ret = run_sender();
+#endif
 	} else {
 		ret = run_receiver();
 	}
-#endif
 	return ret;
 }
 
