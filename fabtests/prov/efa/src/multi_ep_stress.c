@@ -41,7 +41,6 @@ struct test_opts {
 	bool shared_cq;
 	enum { OP_MSG_UNTAGGED = 0, OP_MSG_TAGGED, OP_RMA_WRITEDATA } op_type;
 	bool verbose;
-	char *sender_addr;
 	time_t random_seed;
 };
 
@@ -56,7 +55,6 @@ static struct test_opts topts = {
 	.shared_cq = false, // Default: 1 CQ per EP
 	.op_type = OP_MSG_UNTAGGED,
 	.verbose = true,
-	.sender_addr = NULL,
 };
 
 enum {
@@ -68,7 +66,6 @@ enum {
 	OPT_SHARED_AV,
 	OPT_SHARED_CQ,
 	OPT_OP_TYPE,
-	OPT_SENDER_ADDR,
 	OPT_RANDOM_SEED,
 };
 
@@ -81,7 +78,6 @@ static struct option test_long_opts[] = {
 	{"shared-av", no_argument, NULL, OPT_SHARED_AV},
 	{"shared-cq", no_argument, NULL, OPT_SHARED_CQ},
 	{"op-type", required_argument, NULL, OPT_OP_TYPE},
-	{"sender-addr", required_argument, NULL, OPT_SENDER_ADDR},
 	{"random-seed", required_argument, NULL, OPT_RANDOM_SEED},
 	{0, 0, 0, 0}};
 
@@ -1458,8 +1454,6 @@ static void print_test_usage(void)
 	FT_PRINT_OPTS_USAGE("--op-type <type>",
 			    "operation type: untagged|tagged|writedata "
 			    "(default: untagged)");
-	FT_PRINT_OPTS_USAGE("--sender-addr <addr>",
-			    "address of the sender (required for receiver)");
 	FT_PRINT_OPTS_USAGE("--random-seed <seed>",
 			    "random seed to use for the test. Default value is time(NULL).");
 }
@@ -1533,9 +1527,6 @@ static int parse_test_opts(int argc, char **argv)
 				return -1;
 			}
 			break;
-		case OPT_SENDER_ADDR:
-			topts.sender_addr = optarg;
-			break;
 		case OPT_RANDOM_SEED:
 			topts.random_seed = atol(optarg);
 			break;
@@ -1586,14 +1577,6 @@ int main(int argc, char **argv)
 
 	if (optind < argc)
 		opts.dst_addr = argv[optind];
-
-	if (!topts.sender_addr && !opts.dst_addr) {
-		fprintf(stderr, "Error: --sender-addr must be specified in "
-				"receiver command for socket connection\n");
-		print_test_usage();
-		ret = -1;
-		goto out;
-	}
 
 	ret = run_test();
 
