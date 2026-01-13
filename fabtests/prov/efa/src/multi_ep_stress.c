@@ -132,10 +132,27 @@ struct sender_context {
 #endif
 struct fid_cq *shared_txcq, *shared_rxcq;
 struct fid_av *shared_txav, *shared_rxav;
-#if 0
 static pthread_mutex_t shared_cq_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Cleanup fabric resorses for a worker
+static void cleanup_endpoint(struct worker_context *ctx)
+{
+	if (ctx->ep) {
+		fi_close(&ctx->ep->fid);
+		ctx->ep = NULL;
+	}
+	if (!topts.shared_av && ctx->av) {
+		fi_close(&ctx->av->fid);
+		ctx->av = NULL;
+	}
+	if (!topts.shared_cq && ctx->cq) {
+		fi_close(&ctx->cq->fid);
+		ctx->cq = NULL;
+	}
+}
+
 // Setup endpoint for a worker
-static int setup_endpoint(struct common_context *ctx)
+static int setup_endpoint(struct worker_context *ctx)
 {
 	int ret;
 
@@ -155,7 +172,7 @@ static int setup_endpoint(struct common_context *ctx)
 		ret = fi_cq_open(domain, &attr, &ctx->cq, NULL);
 		if (ret) {
 			FT_PRINTERR("fi_cq_open", ret);
-			goto cleanup_ep;
+			goto error;
 		}
 	}
 
@@ -167,62 +184,35 @@ static int setup_endpoint(struct common_context *ctx)
 		ret = fi_av_open(domain, &attr, &ctx->av, NULL);
 		if (ret) {
 			FT_PRINTERR("fi_av_open", ret);
-			goto cleanup_cq;
+			goto error;
 		}
 	}
 
 	ret = fi_ep_bind(ctx->ep, &ctx->cq->fid, FI_SEND | FI_RECV);
 	if (ret) {
 		FT_PRINTERR("fi_ep_bind", ret);
-		goto cleanup_av;
+		goto error;
 	}
 
 	ret = fi_ep_bind(ctx->ep, &ctx->av->fid, 0);
 	if (ret) {
 		FT_PRINTERR("fi_ep_bind", ret);
-		goto cleanup_av;
+		goto error;
 	}
 
 	ret = fi_enable(ctx->ep);
 	if (ret) {
 		FT_PRINTERR("fi_enable", ret);
-		goto cleanup_av;
+		goto error;
 	}
 
 	return 0;
-
-cleanup_av:
-	if (!topts.shared_av && ctx->av) {
-		fi_close(&ctx->av->fid);
-		ctx->av = NULL;
-	}
-cleanup_cq:
-	if (!topts.shared_cq && ctx->cq) {
-		fi_close(&ctx->cq->fid);
-		ctx->cq = NULL;
-	}
-cleanup_ep:
-	fi_close(&ctx->ep->fid);
-	ctx->ep = NULL;
+error:
+	cleanup_endpoint(ctx);
 	return ret;
 }
 
-static void cleanup_endpoint(struct common_context *ctx)
-{
-	if (ctx->ep) {
-		fi_close(&ctx->ep->fid);
-		ctx->ep = NULL;
-	}
-	if (!topts.shared_av && ctx->av) {
-		fi_close(&ctx->av->fid);
-		ctx->av = NULL;
-	}
-	if (!topts.shared_cq && ctx->cq) {
-		fi_close(&ctx->cq->fid);
-		ctx->cq = NULL;
-	}
-}
-
+#if 0
 // Notification handler thread for sender
 void *notification_handler(void *arg)
 {
@@ -820,10 +810,10 @@ static int notify_endpoint_update(struct receiver_context *ctx)
 
 	return 0;
 }
-
+#endif
 static void *run_receiver_worker(void *arg)
 {
-	struct receiver_context *ctx = (struct receiver_context *) arg;
+	struct worker_context *ctx = (struct worker_context *) arg;
 	int ret = 0;
 	int cycle = 0;
 	int msg_per_ep_lifecyle =
@@ -833,19 +823,17 @@ static void *run_receiver_worker(void *arg)
 	ft_random_init_data(&random_data, topts.random_seed, ctx->worker_id);
 
 	if (topts.shared_cq)
-		ctx->common.cq = shared_rxcq;
+		ctx->cq = shared_rxcq;
 
 	if (topts.shared_av) {
-		ctx->common.av = shared_rxav;
-	} else {
-		ctx->common.num_peers = ctx->num_senders;
+		ctx->av = shared_rxav;
 	}
 
 	for (cycle = 0; cycle < topts.receiver_ep_recycling; cycle++) {
-		ret = setup_endpoint(&ctx->common);
+		ret = setup_endpoint(ctx);
 		if (ret)
 			break;
-
+#if 0
 		// Notify sender of new endpoint
 		ret = notify_endpoint_update(ctx);
 		if (ret < 0) {
@@ -856,7 +844,7 @@ static void *run_receiver_worker(void *arg)
 			cleanup_endpoint(&ctx->common);
 			goto out;
 		}
-
+#endif
 		// sleep random time up to 100ms to emulate the real workload
 		int sleep_time = ft_random_sleep_ms(&random_data, 100);
 		printf("Receiver %d: Sleeping for %d microseconds\n",
@@ -865,27 +853,27 @@ static void *run_receiver_worker(void *arg)
 		int completed = 0;
 		int total_posts = 0;
 
-		for (int sender = 0; sender < ctx->num_senders; sender++) {
+		for (int sender = 0; sender < ctx->num_peers; sender++) {
 			for (int msg = 0; msg < msg_per_ep_lifecyle; msg++) {
 				void *rx_buf_offset =
-					(char *) ctx->rx_buf +
+					(char *) ctx->buffer +
 					(sender * msg_per_ep_lifecyle + msg) *
 						opts.transfer_size;
 
 				switch (topts.op_type) {
 				case OP_MSG_UNTAGGED:
-					ret = fi_recv(ctx->common.ep,
+					ret = fi_recv(ctx->ep,
 						      rx_buf_offset,
 						      opts.transfer_size,
 						      fi_mr_desc(ctx->mr), 0,
-						      &ctx->rx_ctx[msg]);
+						      &ctx->fi_ctx[msg]);
 					break;
 				case OP_MSG_TAGGED:
 					ret = fi_trecv(
-						ctx->common.ep, rx_buf_offset,
+						ctx->ep, rx_buf_offset,
 						opts.transfer_size,
 						fi_mr_desc(ctx->mr), 0, ft_tag,
-						0, &ctx->rx_ctx[msg]);
+						0, &ctx->fi_ctx[msg]);
 					break;
 				case OP_RMA_WRITEDATA:
 					continue;
@@ -911,18 +899,18 @@ static void *run_receiver_worker(void *arg)
 				       msg_per_ep_lifecyle);
 			}
 		}
-
+#if 0
 		if (ft_random_get_bool(&random_data)) {
 			printf("Receiver %d EP cycle %d: Waiting for "
 			       "completions\n",
 			       ctx->worker_id, cycle + 1);
 			int expected_completions =
 				(topts.op_type == OP_RMA_WRITEDATA) ?
-					ctx->num_senders * msg_per_ep_lifecyle :
+					ctx->num_peerss * msg_per_ep_lifecyle :
 					total_posts;
 
 			if (expected_completions > 0) {
-				ret = wait_for_comp(ctx->common.cq,
+				ret = wait_for_comp(ctx->cq,
 						    expected_completions, (int64_t)timeout * 1000000000L / topts.receiver_ep_recycling);
 				if (ret) {
 					fprintf(stderr,
@@ -939,14 +927,14 @@ static void *run_receiver_worker(void *arg)
 			       "completions\n",
 			       ctx->worker_id, cycle + 1);
 		}
-
+#endif
 		printf("Receiver %d EP cycle %d: Completed %d receives from %d "
 		       "senders\n\n",
-		       ctx->worker_id, cycle + 1, completed, ctx->num_senders);
+		       ctx->worker_id, cycle + 1, completed, ctx->num_peers);
 
 	cleanup_cycle:
-		cleanup_endpoint(&ctx->common);
-		// Small delay between cycles
+		cleanup_endpoint(ctx);
+		// Small delay between cycles // Why?????
 		if (cycle < topts.receiver_ep_recycling - 1) {
 			usleep(1000);
 		}
@@ -955,7 +943,7 @@ out:
 	printf("Receiver %d: Completed %d EP cycles\n", ctx->worker_id, cycle);
 	return (void *) (intptr_t) ret;
 }
-#endif
+
 static void cleanup_worker_resourses(struct worker_context *worker) {
 	if (worker->mr) {
 		fi_close(&worker->mr->fid);
@@ -974,10 +962,7 @@ static void cleanup_worker_resourses(struct worker_context *worker) {
 		worker->peer_ids = NULL;
 		worker->num_peers = 0;
 	}
-	if (!topts.shared_av && worker->av) {
-		fi_close(&worker->av->fid);
-		worker->av = NULL;
-	}	
+	cleanup_endpoint(worker);
 }
 
 // Common function for buffer and MR setup
@@ -1312,7 +1297,7 @@ static int run_receiver(void)
 			printf("\n");
 		}
 	}
-#if 0
+
 	// Create worker threads
 	for (int i = 0; i < topts.num_receiver_workers; i++) {
 		ret = pthread_create(&threads[i], NULL, run_receiver_worker,
@@ -1327,7 +1312,7 @@ static int run_receiver(void)
 	for (int i = 0; i < topts.num_receiver_workers; i++) {
 		pthread_join(threads[i], NULL);
 	}
-#endif
+
 out:
 	if (topts.shared_av && shared_rxav) {
 		fi_close(&shared_rxav->fid);
