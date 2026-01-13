@@ -80,7 +80,7 @@ static struct option test_long_opts[] = {
 	{"op-type", required_argument, NULL, OPT_OP_TYPE},
 	{"random-seed", required_argument, NULL, OPT_RANDOM_SEED},
 	{0, 0, 0, 0}};
-
+#if 0
 // RMA information
 struct rma_info {
 	uint64_t remote_addr;
@@ -101,12 +101,17 @@ struct worker_status {
        atomic_flag *active;
 };
 
-// Common context structure
-struct common_context {
+// Worker context structure
+struct worker_context {
+	int worker_id;
+	void *buffer;
+	struct fid_mr *mr;
+	struct fi_context2 *fi_ctx;
 	struct fid_ep *ep;
 	struct fid_cq *cq;
 	struct fid_av *av;
 	size_t num_peers;
+	int *peer_ids; // Store the indices of the remote workers it will talk to
 };
 
 // Sender context
@@ -123,17 +128,6 @@ struct sender_context {
 	int num_peers;
 	int *control_socks; // Array of control sockets for multiple receivers
 	struct worker_status status;
-};
-
-// Receiver context
-struct receiver_context {
-	struct common_context common;
-	int worker_id;
-	void *rx_buf;
-	struct fid_mr *mr;
-	struct fi_context2 *rx_ctx;
-	int *control_socks; // Array of control sockets for multiple senders
-	int num_senders; // Number of connected senders
 };
 
 struct fid_cq *shared_txcq, *shared_rxcq;
@@ -963,8 +957,7 @@ out:
 }
 
 // Common function for buffer and MR setup
-static int setup_worker_resources(void **buf, struct fi_context2 **ctx,
-				  struct fid_mr **mr, uint64_t access,
+static int setup_worker_resources(struct worker_context* worker, uint64_t access,
 				  int buffer_multiplier)
 {
 	int ret;
@@ -972,27 +965,27 @@ static int setup_worker_resources(void **buf, struct fi_context2 **ctx,
 	// Allocate buffer - receivers need space for all senders' messages
 	size_t buffer_size = opts.transfer_size * topts.msgs_per_endpoint *
 			     buffer_multiplier;
-	*buf = calloc(1, buffer_size);
-	if (!*buf) {
+	worker->buffer = calloc(1, buffer_size);
+	if (!worker->buffer) {
 		return -FI_ENOMEM;
 	}
 
 	// Allocate context array
-	*ctx = calloc(topts.msgs_per_endpoint, sizeof(struct fi_context));
-	if (!*ctx) {
-		free(*buf);
-		*buf = NULL;
+	worker->fi_ctx = calloc(topts.msgs_per_endpoint, sizeof(struct fi_context));
+	if (!worker->fi_ctx) {
+		free(worker->buffer);
+		worker->buffer = NULL;
 		return -FI_ENOMEM;
 	}
 
 	// Register memory region
-	ret = fi_mr_reg(domain, *buf, buffer_size, access, 0, 0, 0, mr, NULL);
+	ret = fi_mr_reg(domain, worker->buffer, buffer_size, access, 0, 0, 0, mr, NULL);
 	if (ret) {
 		FT_PRINTERR("fi_mr_reg", ret);
-		free(*ctx);
-		free(*buf);
-		*buf = NULL;
-		*ctx = NULL;
+		free(worker->fi_ctx);
+		free(worker->buffer);
+		worker->buffer = NULL;
+		worker->fi_ctx = NULL;
 		return ret;
 	}
 
@@ -1227,8 +1220,9 @@ out:
 static int run_receiver(void)
 {
 	int ret, offset;
-	struct receiver_context *workers;
+	struct worker_context *workers;
 	pthread_t *threads;
+
 
 	workers = calloc(topts.num_receiver_workers, sizeof(*workers));
 	threads = calloc(topts.num_receiver_workers, sizeof(*threads));
@@ -1269,7 +1263,7 @@ static int run_receiver(void)
 		// Calculate number of senders this receiver talks to
 		if (topts.num_sender_workers <= topts.num_receiver_workers) {
 			// Each receiver talks to one sender
-			workers[i].num_senders = 1;
+			workers[i].num_peers = 1;
 		} else {
 			// Multiple senders may send to this receiver
 			int count = 0;
@@ -1277,22 +1271,12 @@ static int run_receiver(void)
 			     j += topts.num_receiver_workers) {
 				count++;
 			}
-			workers[i].num_senders = count;
+			workers[i].num_peers = count;
 		}
 
 		// Setup common resources
-		ret = setup_worker_resources(
-			&workers[i].rx_buf, &workers[i].rx_ctx, &workers[i].mr,
-			FI_RECV | FI_REMOTE_WRITE, workers[i].num_senders);
+		ret = setup_worker_resources(&workers[i], FI_RECV | FI_REMOTE_WRITE, workers[i].num_peers);
 		if (ret) {
-			goto out;
-		}
-
-		// Allocate control socket array
-		workers[i].control_socks =
-			calloc(workers[i].num_senders, sizeof(int));
-		if (!workers[i].control_socks) {
-			ret = -FI_ENOMEM;
 			goto out;
 		}
 
@@ -1308,7 +1292,6 @@ static int run_receiver(void)
 			printf("\n");
 		}
 
-		int sock_idx = 0;
 		int sender_count = (topts.num_sender_workers <=
 				    topts.num_receiver_workers) ?
 					   1 :
@@ -1324,35 +1307,10 @@ static int run_receiver(void)
 				if (sender_idx >= topts.num_sender_workers)
 					break;
 			}
-			char port_str[16];
-			offset = 100 * sender_idx;
-			snprintf(port_str, sizeof(port_str), "%d",
-				 atoi(opts.oob_port) + offset);
-
 			if (topts.verbose) {
-				printf("Receiver %d connecting to sender %d on "
-				       "port %s\n\n",
-				       i, sender_idx, port_str);
+				printf("Receiver %d connecting to sender %d", i, sender_idx);
 			}
 
-			if (sock_idx >= workers[i].num_senders) {
-				fprintf(stderr,
-					"Receiver %d: Too many sender "
-					"connections (sock_idx=%d)\n",
-					i, sock_idx);
-				break;
-			}
-
-			int *control_sock = &workers[i].control_socks[sock_idx];
-			ret = control_setup_client(topts.sender_addr, port_str,
-						   control_sock);
-			if (ret) {
-				fprintf(stderr,
-					"control_setup_client failed for "
-					"worker %d->%d: %d\n",
-					i, sender_idx, ret);
-				goto out;
-			}
 			sock_idx++;
 		}
 	}
@@ -1381,14 +1339,6 @@ out:
 			fi_close(&shared_rxcq->fid);
 		}
 		for (int i = 0; i < topts.num_receiver_workers; i++) {
-			if (workers[i].control_socks) {
-				// Close all control sockets
-				for (int j = 0; j < workers[i].num_senders; j++) {
-					if (workers[i].control_socks[j] >= 0)
-						close(workers[i].control_socks[j]);
-				}
-				free(workers[i].control_socks);
-			}
 			if (workers[i].mr)
 				fi_close(&workers[i].mr->fid);
 			if (!topts.shared_av && workers[i].common.av) {
@@ -1399,11 +1349,13 @@ out:
 			free(workers[i].rx_ctx);
 		}
 	}
+	if (control_socket >= 0)
+		close(control_socket);
 	free(workers);
 	free(threads);
 	return ret;
 }
-
+#endif
 static int run_test(void)
 {
 	int ret;
@@ -1422,14 +1374,14 @@ static int run_test(void)
 	ret = ft_init_fabric();
 	if (ret)
 		return ret;
-
+#if 0
 	// Run as sender or receiver based on dst_addr
 	if (opts.dst_addr) {
 		ret = run_sender();
 	} else {
 		ret = run_receiver();
 	}
-
+#endif
 	return ret;
 }
 
@@ -1551,9 +1503,6 @@ int main(int argc, char **argv)
 {
 	int ret;
 
-	// Ignore SIGPIPE to prevent process termination when senders disconnect
-	signal(SIGPIPE, SIG_IGN);
-
 	opts = INIT_OPTS;
 	opts.options |= FT_OPT_SIZE;
 	timeout = 10;
@@ -1578,9 +1527,15 @@ int main(int argc, char **argv)
 	if (optind < argc)
 		opts.dst_addr = argv[optind];
 
+	ret = ft_init_oob();
+	if(ret)	{
+		FT_PRINTERR("ft_init_oob", ret);
+		goto out;
+	}
 	ret = run_test();
-
+	ft_sync_oob();	
 out:
+	ft_close_oob();
 	ft_free_res();
 	return ft_exit_code(ret);
 }
