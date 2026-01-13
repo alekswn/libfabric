@@ -17,6 +17,7 @@
 #include <rdma/fi_domain.h>
 #include <rdma/fi_endpoint.h>
 #include <rdma/fi_errno.h>
+ 
 #include <rdma/fi_rma.h>
 #include <rdma/fi_tagged.h>
 
@@ -94,6 +95,40 @@ struct ep_info {
 	size_t addr_len;
 	struct rma_info rma;
 };
+
+// Multi producer single consumer lock-free queue
+struct mpsc_node {
+    struct ep_info *msg;
+};
+
+struct mpsc_queue {
+};
+
+static void mpsc_init(struct mpsc_queue *q) {
+	//TODO
+}
+
+// Producer (thread-safe for multiple producers). Producer must not mutate *src.
+static void mpsc_push(struct mpsc_queue *q, struct ep_info *src) {
+	//TODO
+}
+
+// Consumer. Blocks if empty. Returns pointer passed by producer. Consumer frees memeory.
+static struct ep_info* mpsc_pop(struct mpsc_queue *q) {
+	return NULL;
+	//TODO
+}
+
+// Consumer. Non-blocking. Returns pointer passed by producer. Consumer frees memeory.
+static struct ep_info* mpsc_try_pop(struct mpsc_queue *q) {
+	return NULL;
+	//TODO
+}
+
+static void mpsc_destroy(struct mpsc_queue *q) {
+	//TODO
+}
+
 #if 0
 // Worker status tracking
 struct worker_status {
@@ -112,6 +147,7 @@ struct worker_context {
 	struct fid_av *av;
 	size_t num_peers;
 	int *peer_ids; // Store the indices of the remote workers it will talk to
+	struct mpsc_queue *control_queue;
 };
 #if 0
 // Sender context
@@ -765,7 +801,7 @@ static int notify_endpoint_update(struct worker_context *ctx)
 	// Send to all connected senders
 	for (int i = 0; i < ctx->num_peers; i++) {
 		msg.worker_id = ctx->peer_ids[i];
-		//TODO
+		mpsc_push(ctx->control_queue, &msg);
 		if (topts.verbose)
 			printf("Receiver %d: Notified sender %d about new EP\n",
 			       ctx->worker_id, msg.worker_id);
@@ -903,6 +939,7 @@ static void *run_receiver_worker(void *arg)
 	}
 out:
 	printf("Receiver %d: Completed %d EP cycles\n", ctx->worker_id, cycle);
+	mpsc_push(ctx->control_queue, NULL);
 	return (void *) (intptr_t) ret;
 }
 
@@ -1192,6 +1229,7 @@ out:
 static int run_receiver(void)
 {
 	int ret;
+	struct mpsc_queue control_queue;
 	struct worker_context *workers;
 	pthread_t *threads;
 
@@ -1227,9 +1265,12 @@ static int run_receiver(void)
 		}
 	}
 
+	mpsc_init(&control_queue);
+
 	// Initialize workers
 	for (int i = 0; i < topts.num_receiver_workers; i++) {
 		workers[i].worker_id = i;
+		workers[i].control_queue = &control_queue;
 
 		if (topts.num_sender_workers <= topts.num_receiver_workers) {
 			// Each receiver connects to one sender
@@ -1270,12 +1311,30 @@ static int run_receiver(void)
 		}
 	}
 
-	// Wait for completion
+	// Forward control messages from workers to OOB channel
+	size_t completed_workers = 0;
+	while(true) {
+		struct ep_info* msg = mpsc_pop(&control_queue); // block
+		if (msg == NULL) {
+		       	if (++completed_workers == topts.num_receiver_workers)
+				break;
+			else 
+				continue;
+		}
+		ret = ft_sock_send(oob_sock, (void*)msg, sizeof(*msg));
+		if (ret) {
+			FT_PRINTERR("ft_sock_send", ret);
+			goto out;
+		}
+	}
+
+	// Wait for thread completion
 	for (int i = 0; i < topts.num_receiver_workers; i++) {
 		pthread_join(threads[i], NULL);
 	}
 
 out:
+	mpsc_destroy(&control_queue);
 	if (topts.shared_av && shared_rxav) {
 		fi_close(&shared_rxav->fid);
 	}
