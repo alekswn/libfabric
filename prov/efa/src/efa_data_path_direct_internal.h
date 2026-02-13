@@ -562,18 +562,21 @@ EFA_ALWAYS_INLINE void
 efa_data_path_direct_send_wr_post(
 		struct efa_qp *qp,
 		struct efa_data_path_direct_sq *sq,
-		struct efa_io_tx_wqe *wqe)
+		struct efa_io_tx_wqe_ex *wqe,
+		size_t wqe_size)
 {
 	uint32_t sq_desc_idx;
 	uint64_t *src, *dst;
+	size_t num_words;
 
 	/* Calculate target address in write-combined memory */
 	sq_desc_idx = sq->wq.pc & sq->wq.desc_mask;
 	src = (uint64_t *)wqe;
 	dst = (uint64_t *)((struct efa_io_tx_wqe *)sq->desc + sq_desc_idx);
 
-	/* Copy 64-byte WQE using 8 uint64_t stores */
-	for (int i = 0; i < 8; i++)
+	/* Copy WQE using uint64_t stores - 8 words for 64-byte, 16 for 128-byte */
+	num_words = wqe_size / sizeof(uint64_t);
+	for (size_t i = 0; i < num_words; i++)
 		dst[i] = src[i];
 
 #if HAVE_LTTNG
@@ -612,7 +615,7 @@ EFA_ALWAYS_INLINE void efa_data_path_direct_set_ud_addr(struct efa_io_tx_meta_de
  * @param num_buf Number of data buffers
  * @param buf_list Array of data buffers
  */
-EFA_ALWAYS_INLINE void efa_data_path_direct_set_inline_data(struct efa_io_tx_wqe *wqe,
+EFA_ALWAYS_INLINE void efa_data_path_direct_set_inline_data(struct efa_io_tx_wqe_ex *wqe,
                                                             size_t num_buf,
                                                             const struct ibv_data_buf *buf_list)
 {
@@ -627,6 +630,30 @@ EFA_ALWAYS_INLINE void efa_data_path_direct_set_inline_data(struct efa_io_tx_wqe
 
 	EFA_SET(&wqe->meta.ctrl1, EFA_IO_TX_META_DESC_INLINE_MSG, 1);
 	wqe->meta.length = total_length;
+}
+
+/**
+ * @brief Internal utility: Set inline data for RDMA write operations
+ * @param wqe Pointer to work queue entry
+ * @param num_buf Number of data buffers
+ * @param buf_list Array of data buffers
+ */
+EFA_ALWAYS_INLINE void efa_data_path_direct_set_rdma_inline_data(struct efa_io_tx_wqe_ex *wqe,
+                                                                  size_t num_buf,
+                                                                  const struct ibv_data_buf *buf_list)
+{
+	uint32_t total_length = 0;
+	size_t i;
+
+	for (i = 0; i < num_buf; i++) {
+		memcpy(wqe->data.rdma_req_ex.inline_data + total_length,
+			   buf_list[i].addr, buf_list[i].length);
+		total_length += buf_list[i].length;
+	}
+
+	assert(total_length <= 80);
+	EFA_SET(&wqe->meta.ctrl1, EFA_IO_TX_META_DESC_INLINE_MSG, 1);
+	wqe->data.rdma_req_ex.remote_mem.length = total_length;
 }
 
 #endif /* HAVE_EFA_DATA_PATH_DIRECT */

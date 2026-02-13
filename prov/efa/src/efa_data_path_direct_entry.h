@@ -387,8 +387,9 @@ static inline int efa_data_path_direct_post_send(
 		uint32_t qkey)
 {
 	struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
-	struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
+	struct efa_io_tx_wqe_ex local_wqe = {0}; /* Stack variable - can be in registers */
 	struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
+	size_t wqe_size = sizeof(struct efa_io_tx_wqe);
 	int err = 0;
 
 	/* Validate queue space */
@@ -425,12 +426,15 @@ static inline int efa_data_path_direct_post_send(
 	if (use_inline) {
 		/* Inline data path - caller has prepared inline_data_list */
 		efa_data_path_direct_set_inline_data(&local_wqe, iov_count, inline_data_list);
+		/* Determine WQE size based on inline data length */
+		if (meta_desc->length > 32)
+			wqe_size = sizeof(struct efa_io_tx_wqe_ex);
 	} else {
 		/* SGE list path - caller has prepared sge_list */
 		efa_data_path_direct_set_sgl(local_wqe.data.sgl, meta_desc, sge_list, iov_count);
 	}
 
-	efa_data_path_direct_send_wr_post(qp, sq, &local_wqe);
+	efa_data_path_direct_send_wr_post(qp, sq, &local_wqe, wqe_size);
 
 	/* Update queue state */
 	efa_sq_advance_post_idx(sq);
@@ -468,9 +472,9 @@ static inline int efa_data_path_direct_post_read(
 		uint32_t qkey)
 {
 	struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
-	struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
+	struct efa_io_tx_wqe_ex local_wqe = {0}; /* Stack variable - can be in registers */
 	struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
-	struct efa_io_remote_mem_addr *remote_mem = &local_wqe.data.rdma_req.remote_mem;
+	struct efa_io_remote_mem_addr *remote_mem = &local_wqe.data.rdma_req_ex.remote_mem;
 	int err;
 
 	/* Validate queue space */
@@ -514,9 +518,9 @@ static inline int efa_data_path_direct_post_read(
 	remote_mem->length = efa_sge_total_bytes(sge_list, sge_count);
 
 	/* Set local SGE list - caller has prepared sge_list */
-	efa_data_path_direct_set_sgl(local_wqe.data.rdma_req.local_mem, meta_desc, sge_list, sge_count);
+	efa_data_path_direct_set_sgl(local_wqe.data.rdma_req_ex.local_mem, meta_desc, sge_list, sge_count);
 
-	efa_data_path_direct_send_wr_post(qp, sq, &local_wqe);
+	efa_data_path_direct_send_wr_post(qp, sq, &local_wqe, sizeof(struct efa_io_tx_wqe));
 
 	/* Update queue state */
 	efa_sq_advance_post_idx(sq);
@@ -532,8 +536,10 @@ static inline int efa_data_path_direct_post_read(
 /**
  * @brief Consolidated RDMA write operation - builds WQE as stack variable and posts directly
  * @param qp EFA queue pair
- * @param sge_list Pre-prepared SGE list for local buffers
- * @param sge_count Number of SGE entries
+ * @param sge_list Pre-prepared SGE list for local buffers (NULL if use_inline is true)
+ * @param inline_data_list Pre-prepared inline data list (NULL if use_inline is false)
+ * @param iov_count Number of SGE/inline data entries
+ * @param use_inline Whether to use inline data
  * @param remote_key Remote memory key
  * @param remote_addr Remote memory address
  * @param wr_id Work request ID (pre-prepared by caller)
@@ -547,7 +553,9 @@ static inline int
 efa_data_path_direct_post_write(
 		struct efa_qp *qp,
 		const struct ibv_sge *sge_list,
-		size_t sge_count,
+		const struct ibv_data_buf *inline_data_list,
+		size_t iov_count,
+		bool use_inline,
 		uint32_t remote_key,
 		uint64_t remote_addr,
 		uintptr_t wr_id,
@@ -558,13 +566,14 @@ efa_data_path_direct_post_write(
 		uint32_t qkey)
 {
 	struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
-	struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
+	struct efa_io_tx_wqe_ex local_wqe = {0}; /* Stack variable - can be in registers */
 	struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
-	struct efa_io_remote_mem_addr *remote_mem = &local_wqe.data.rdma_req.remote_mem;
+	struct efa_io_remote_mem_addr *remote_mem = &local_wqe.data.rdma_req_ex.remote_mem;
+	size_t wqe_size = sizeof(struct efa_io_tx_wqe);
 	int err;
 
 	/* Validate SGE count for RDMA operations */
-	if (OFI_UNLIKELY(sge_count > EFA_IO_TX_DESC_NUM_RDMA_BUFS)) {
+	if (OFI_UNLIKELY(iov_count > EFA_IO_TX_DESC_NUM_RDMA_BUFS)) {
 		EFA_WARN(FI_LOG_EP_DATA, "EFA device doesn't support > %d iov for rdma operations\n", EFA_IO_TX_DESC_NUM_RDMA_BUFS);
 		/* ring db for earlier wqes if there is any */
 		if (sq->num_wqe_pending) {
@@ -580,15 +589,6 @@ efa_data_path_direct_post_write(
 		if (sq->num_wqe_pending)
 			efa_data_path_direct_send_wr_ring_db(sq);
 		return err;
-	}
-
-	/* Validate SGE count for RDMA operations */
-	if (OFI_UNLIKELY(sge_count > EFA_IO_TX_DESC_NUM_RDMA_BUFS)) {
-		EFA_WARN(FI_LOG_EP_DATA, "EFA device doesn't support > %d iov for rdma operations\n", EFA_IO_TX_DESC_NUM_RDMA_BUFS);
-		/* ring db for earlier wqes if there is any */
-		if (sq->num_wqe_pending)
-			efa_data_path_direct_send_wr_ring_db(sq);
-		return EINVAL;
 	}
 
 	/* This means we are starting from fresh after a db ring so we need a barrier */
@@ -614,12 +614,21 @@ efa_data_path_direct_post_write(
 
 	/* Set remote memory information */
 	efa_send_wr_set_rdma_addr(remote_mem, remote_key, remote_addr);
-	remote_mem->length = efa_sge_total_bytes(sge_list, sge_count);
 
-	/* Set local SGE list - caller has prepared sge_list */
-	efa_data_path_direct_set_sgl(local_wqe.data.rdma_req.local_mem, meta_desc, sge_list, sge_count);
+	/* Handle inline data or SGE list */
+	if (use_inline) {
+		/* Inline data path - caller has prepared inline_data_list */
+		efa_data_path_direct_set_rdma_inline_data(&local_wqe, iov_count, inline_data_list);
+		/* Determine WQE size based on inline data length */
+		if (remote_mem->length > 32)
+			wqe_size = sizeof(struct efa_io_tx_wqe_ex);
+	} else {
+		/* SGE list path - caller has prepared sge_list */
+		remote_mem->length = efa_sge_total_bytes(sge_list, iov_count);
+		efa_data_path_direct_set_sgl(local_wqe.data.rdma_req_ex.local_mem, meta_desc, sge_list, iov_count);
+	}
 
-	efa_data_path_direct_send_wr_post(qp, sq, &local_wqe);
+	efa_data_path_direct_send_wr_post(qp, sq, &local_wqe, wqe_size);
 
 	/* Update queue state */
 	efa_sq_advance_post_idx(sq);
