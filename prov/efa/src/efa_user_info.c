@@ -441,6 +441,8 @@ int efa_user_info_alter_rdm(int version, struct fi_info *info, const struct fi_i
 static
 int efa_user_info_alter_direct(int version, struct fi_info *info, const struct fi_info *hints)
 {
+	struct efa_device *device = &g_efa_selected_device_list[0];
+
 	/*
 	 * FI_HMEM is a primary capability, therefore only check
 	 * and claim support when explicitly requested
@@ -503,6 +505,27 @@ int efa_user_info_alter_direct(int version, struct fi_info *info, const struct f
 		info->tx_attr->caps &= ~OFI_TX_RMA_CAPS;
 		info->rx_attr->caps &= ~OFI_RX_RMA_CAPS;
 	}
+
+	/* Handle inject_size hints for wide WQE support */
+	if (hints && hints->tx_attr && hints->tx_attr->inject_size > 0) {
+		if (hints->tx_attr->inject_size > device->max_inline_buf_size) {
+			/* Requested inject size exceeds device capability */
+			EFA_INFO(FI_LOG_CORE,
+				 "Requested inject_size %zu exceeds max_inline_buf_size %u\n",
+				 hints->tx_attr->inject_size, device->max_inline_buf_size);
+			return -FI_ENODATA;
+		}
+
+		if (hints->tx_attr->inject_size > device->efa_attr.inline_buf_size) {
+			/* Wide WQE requested - adjust TX queue size */
+			info->tx_attr->inject_size = hints->tx_attr->inject_size;
+			info->tx_attr->size = rounddown_power_of_two(device->efa_attr.max_sq_wr / 2);
+		} else {
+			/* Regular WQE */
+			info->tx_attr->inject_size = hints->tx_attr->inject_size;
+		}
+	}
+
 	/*
 	 * Handle user-provided hints and adapt the info object passed back up
 	 * based on EFA-specific constraints.
