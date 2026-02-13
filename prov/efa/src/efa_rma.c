@@ -181,27 +181,39 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 	struct efa_conn *conn;
 #ifndef _WIN32
 	struct ibv_sge sge_list[msg->iov_count];
+	struct ibv_data_buf inline_data_list[msg->iov_count];
 #else
 	/* MSVC compiler does not support array declarations with runtime size, so hardcode
 	 * the expected iov_limit/max_sq_sge from the lower-level efa provider.
 	 */
 	struct ibv_sge sge_list[EFA_DEV_ATTR_MAX_WR_SGE];
+	struct ibv_data_buf inline_data_list[EFA_DEV_ATTR_MAX_WR_SGE];
 #endif
 	uintptr_t wr_id;
+	size_t total_len;
+	bool use_inline = false;
 	int i, err = 0;
-
-	if (flags & FI_INJECT) {
-		EFA_WARN(FI_LOG_EP_DATA,
-			 "FI_INJECT is not supported by efa rma yet.\n");
-		return -FI_ENOSYS;
-	}
 
 	efa_tracepoint(write_begin_msg_context, (size_t) msg->context, (size_t) msg->addr);
 
-	EFA_DBG(FI_LOG_EP_DATA,
-		"total len: %zu, addr: %lu, context: %lx, flags: %lx\n",
-		ofi_total_iov_len(msg->msg_iov, msg->iov_count),
-		msg->addr, (size_t) msg->context, flags);
+	/* Check if we should use inline data */
+	if (flags & FI_INJECT) {
+		total_len = ofi_total_iov_len(msg->msg_iov, msg->iov_count);
+		if (total_len > base_ep->inject_rma_size) {
+			EFA_WARN(FI_LOG_EP_DATA,
+				 "Inject size %zu exceeds inject_rma_size %zu\n",
+				 total_len, base_ep->inject_rma_size);
+			return -FI_EINVAL;
+		}
+		use_inline = true;
+		EFA_DBG(FI_LOG_EP_DATA,
+			"total len: %zu, addr: %lu, context: %lx, flags: %lx\n",
+			total_len, msg->addr, (size_t) msg->context, flags);
+	} else {
+		EFA_DBG(FI_LOG_EP_DATA,
+			"addr: %lu, context: %lx, flags: %lx\n",
+			msg->addr, (size_t) msg->context, flags);
+	}
 
 	ofi_genlock_lock(&base_ep->util_ep.lock);
 
@@ -209,28 +221,43 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 	wr_id = (uintptr_t) efa_fill_context(
 		msg->context, msg->addr, flags, FI_RMA | FI_WRITE);
 
-	/* Prepare SGE list */
-	for (i = 0; i < msg->iov_count; ++i) {
-		sge_list[i].addr = (uint64_t)msg->msg_iov[i].iov_base;
-		sge_list[i].length = msg->msg_iov[i].iov_len;
-		if (OFI_UNLIKELY(!msg->desc || !msg->desc[i])) {
-			EFA_WARN(FI_LOG_EP_CTRL,
-				 "EFA direct requires FI_MR_LOCAL but "
-				 "application does not provide a valid desc\n");
-			err = -FI_EINVAL;
-			goto out_err;
-		}
-		sge_list[i].lkey = ((struct efa_mr *)msg->desc[i])->ibv_mr->lkey;
-	}
-
 	conn = efa_av_addr_to_conn(base_ep->av, msg->addr);
 	assert(conn && conn->ep_addr);
 
-	/* Use consolidated RDMA write function */
-	err = efa_qp_post_write(base_ep->qp, sge_list, msg->iov_count,
-				msg->rma_iov[0].key, msg->rma_iov[0].addr,
-				wr_id, msg->data, flags,
-				conn->ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
+	if (use_inline) {
+		/* Prepare inline data list */
+		for (i = 0; i < msg->iov_count; ++i) {
+			inline_data_list[i].addr = msg->msg_iov[i].iov_base;
+			inline_data_list[i].length = msg->msg_iov[i].iov_len;
+		}
+
+		/* Use consolidated RDMA write function with inline data */
+		err = efa_qp_post_write(base_ep->qp, NULL, inline_data_list, msg->iov_count, true,
+					msg->rma_iov[0].key, msg->rma_iov[0].addr,
+					wr_id, msg->data, flags,
+					conn->ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
+	} else {
+		/* Prepare SGE list */
+		for (i = 0; i < msg->iov_count; ++i) {
+			sge_list[i].addr = (uint64_t)msg->msg_iov[i].iov_base;
+			sge_list[i].length = msg->msg_iov[i].iov_len;
+			if (OFI_UNLIKELY(!msg->desc || !msg->desc[i])) {
+				EFA_WARN(FI_LOG_EP_CTRL,
+					 "EFA direct requires FI_MR_LOCAL but "
+					 "application does not provide a valid desc\n");
+				err = -FI_EINVAL;
+				goto out_err;
+			}
+			sge_list[i].lkey = ((struct efa_mr *)msg->desc[i])->ibv_mr->lkey;
+		}
+
+		/* Use consolidated RDMA write function */
+		err = efa_qp_post_write(base_ep->qp, sge_list, NULL, msg->iov_count, false,
+					msg->rma_iov[0].key, msg->rma_iov[0].addr,
+					wr_id, msg->data, flags,
+					conn->ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
+	}
+
 	if (OFI_UNLIKELY(err))
 		err = (err == ENOMEM) ? -FI_EAGAIN : -err;
 
@@ -324,6 +351,79 @@ ssize_t efa_rma_writedata(struct fid_ep *ep_fid, const void *buf, size_t len,
 	return efa_rma_post_write(base_ep, &msg, FI_REMOTE_CQ_DATA | efa_tx_flags(base_ep));
 }
 
+ssize_t efa_rma_inject_write(struct fid_ep *ep_fid, const void *buf, size_t len,
+			      fi_addr_t dest_addr, uint64_t addr, uint64_t key)
+{
+	struct iovec iov;
+	struct fi_rma_iov rma_iov;
+	struct fi_msg_rma msg;
+	struct efa_base_ep *base_ep;
+	int err;
+
+	base_ep = container_of(ep_fid, struct efa_base_ep, util_ep.ep_fid);
+	
+	/* Check if inject RMA is supported */
+	if (base_ep->inject_rma_size == 0) {
+		EFA_WARN(FI_LOG_EP_DATA,
+			 "Inject RMA not supported (inject_rma_size is 0)\\n");
+		return -FI_EOPNOTSUPP;
+	}
+	
+	if (len > base_ep->inject_rma_size) {
+		EFA_WARN(FI_LOG_EP_DATA,
+			 "Inject size %zu exceeds inject_rma_size %zu\\n",
+			 len, base_ep->inject_rma_size);
+		return -FI_EINVAL;
+	}
+	
+	err = efa_rma_check_cap(base_ep);
+	if (err)
+		return err;
+
+	EFA_SETUP_IOV(iov, buf, len);
+	EFA_SETUP_RMA_IOV(rma_iov, addr, len, key);
+	EFA_SETUP_MSG_RMA(msg, &iov, NULL, 1, dest_addr, &rma_iov, 1, NULL, 0);
+
+	return efa_rma_post_write(base_ep, &msg, FI_INJECT | efa_tx_flags(base_ep));
+}
+
+ssize_t efa_rma_inject_writedata(struct fid_ep *ep_fid, const void *buf, size_t len,
+				  uint64_t data, fi_addr_t dest_addr, uint64_t addr,
+				  uint64_t key)
+{
+	struct iovec iov;
+	struct fi_rma_iov rma_iov;
+	struct fi_msg_rma msg;
+	struct efa_base_ep *base_ep;
+	int err;
+
+	base_ep = container_of(ep_fid, struct efa_base_ep, util_ep.ep_fid);
+	
+	/* Check if inject RMA is supported */
+	if (base_ep->inject_rma_size == 0) {
+		EFA_WARN(FI_LOG_EP_DATA,
+			 "Inject RMA not supported (inject_rma_size is 0)\\n");
+		return -FI_EOPNOTSUPP;
+	}
+	
+	if (len > base_ep->inject_rma_size) {
+		EFA_WARN(FI_LOG_EP_DATA,
+			 "Inject size %zu exceeds inject_rma_size %zu\\n",
+			 len, base_ep->inject_rma_size);
+		return -FI_EINVAL;
+	}
+	
+	err = efa_rma_check_cap(base_ep);
+	if (err)
+		return err;
+
+	EFA_SETUP_IOV(iov, buf, len);
+	EFA_SETUP_RMA_IOV(rma_iov, addr, len, key);
+	EFA_SETUP_MSG_RMA(msg, &iov, NULL, 1, dest_addr, &rma_iov, 1, NULL, data);
+
+	return efa_rma_post_write(base_ep, &msg, FI_INJECT | FI_REMOTE_CQ_DATA | efa_tx_flags(base_ep));
+}
+
 struct fi_ops_rma efa_dgram_ep_rma_ops = {
 	.size = sizeof(struct fi_ops_rma),
 	.read = fi_no_rma_read,
@@ -345,7 +445,7 @@ struct fi_ops_rma efa_rma_ops = {
 	.write = efa_rma_write,
 	.writev = efa_rma_writev,
 	.writemsg = efa_rma_writemsg,
-	.inject = fi_no_rma_inject,
+	.inject = efa_rma_inject_write,
 	.writedata = efa_rma_writedata,
-	.injectdata = fi_no_rma_injectdata,
+	.injectdata = efa_rma_inject_writedata,
 };
