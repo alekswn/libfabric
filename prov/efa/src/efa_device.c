@@ -71,6 +71,9 @@ int efa_device_construct_gid(struct efa_device *efa_device,
 		goto err_close;
 	}
 
+	/* Initialize max_inline_buf_size - will be queried from device if available */
+	efa_device->max_inline_buf_size = efa_device->efa_attr.inline_buf_size;
+
 	memset(&efa_device->ibv_port_attr, 0, sizeof(efa_device->ibv_port_attr));
 	err = ibv_query_port(efa_device->ibv_ctx, 1, &efa_device->ibv_port_attr);
 	if (err) {

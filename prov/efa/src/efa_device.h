@@ -20,6 +20,7 @@ struct efa_device {
 	union ibv_gid		ibv_gid;
 	uint32_t		device_caps;
 	uint32_t		max_rdma_size;
+	uint32_t		max_inline_buf_size; /* Maximum inline data size for wide WQE */
 	struct fi_info		*rdm_info;
 	struct fi_info		*dgram_info;
 	/* QP table and lock for device-level QP management */
