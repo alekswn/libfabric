@@ -1054,3 +1054,126 @@ void test_info_direct_rma_without_rx_cq_data_when_unsolicited_write_recv_support
 {
 	test_info_direct_rma_common(true, true, false, 0, 4, false, true);
 }
+
+/**
+ * @brief Test inject_size hint with no hint (default behavior)
+ * Should return default 32-byte inject size
+ */
+void test_info_direct_inject_size_no_hint()
+{
+	struct efa_device *device = &g_efa_selected_device_list[0];
+	struct fi_info *info = NULL;
+	int err;
+
+	err = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0ULL, NULL, &info);
+	assert_int_equal(err, 0);
+	assert_non_null(info);
+	assert_int_equal(info->tx_attr->inject_size, device->efa_attr.inline_buf_size);
+	fi_freeinfo(info);
+}
+
+/**
+ * @brief Test inject_size hint with small size (<=32 bytes)
+ * Should return requested inject size with normal TX queue depth
+ */
+void test_info_direct_inject_size_small()
+{
+	struct efa_device *device = &g_efa_selected_device_list[0];
+	struct fi_info *hints, *info = NULL;
+	int err;
+
+	hints = efa_unit_test_alloc_hints(FI_EP_RDM, EFA_FABRIC_NAME);
+	hints->tx_attr->inject_size = 16;
+
+	err = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0ULL, hints, &info);
+	assert_int_equal(err, 0);
+	assert_non_null(info);
+	assert_int_equal(info->tx_attr->inject_size, 16);
+	assert_int_equal(info->tx_attr->size, device->efa_attr.max_sq_wr);
+	fi_freeinfo(info);
+}
+
+/**
+ * @brief Test inject_size hint with wide WQE size (>32 bytes, <=max_inline_buf_size)
+ * Should enable wide WQE and reduce TX queue depth by half
+ */
+void test_info_direct_inject_size_wide_wqe()
+{
+	struct efa_device *device = &g_efa_selected_device_list[0];
+	struct fi_info *hints, *info = NULL;
+	int err;
+
+	hints = efa_unit_test_alloc_hints(FI_EP_RDM, EFA_FABRIC_NAME);
+	hints->tx_attr->inject_size = 64;
+
+	err = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0ULL, hints, &info);
+	assert_int_equal(err, 0);
+	assert_non_null(info);
+	assert_int_equal(info->tx_attr->inject_size, 64);
+	assert_int_equal(info->tx_attr->size, rounddown_power_of_two(device->efa_attr.max_sq_wr / 2));
+	fi_freeinfo(info);
+}
+
+/**
+ * @brief Test inject_size hint exceeding device capability
+ * Should fail with -FI_ENODATA
+ */
+void test_info_direct_inject_size_exceeds_max()
+{
+	struct efa_device *device = &g_efa_selected_device_list[0];
+	struct fi_info *hints, *info = NULL;
+	int err;
+
+	hints = efa_unit_test_alloc_hints(FI_EP_RDM, EFA_FABRIC_NAME);
+	hints->tx_attr->inject_size = device->max_inline_buf_size + 1;
+
+	err = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0ULL, hints, &info);
+	assert_int_equal(err, -FI_ENODATA);
+	assert_null(info);
+}
+
+/**
+ * @brief Test fi_getopt returns correct inject sizes for regular WQE
+ * Should return MSG inject size only, RMA inject disabled
+ */
+void test_ep_getopt_inject_size_regular_wqe(struct efa_resource **state)
+{
+	struct efa_resource *resource = *state;
+	size_t inject_msg_size, inject_rma_size;
+
+	resource->hints = efa_unit_test_alloc_hints(FI_EP_RDM, EFA_FABRIC_NAME);
+	resource->hints->tx_attr->inject_size = 16;
+	efa_unit_test_resource_construct_with_hints(resource, FI_EP_RDM, FI_VERSION(1, 18),
+	                                            resource->hints, true, true);
+
+	assert_int_equal(fi_getopt(&resource->ep->fid, FI_OPT_ENDPOINT, FI_OPT_INJECT_MSG_SIZE,
+			&inject_msg_size, &(size_t){sizeof inject_msg_size}), 0);
+	assert_int_equal(fi_getopt(&resource->ep->fid, FI_OPT_ENDPOINT, FI_OPT_INJECT_RMA_SIZE,
+			&inject_rma_size, &(size_t){sizeof inject_rma_size}), 0);
+
+	assert_int_equal(inject_msg_size, 16);
+	assert_int_equal(inject_rma_size, 0);
+}
+
+/**
+ * @brief Test fi_getopt returns correct inject sizes for wide WQE
+ * Should return both MSG and RMA inject sizes
+ */
+void test_ep_getopt_inject_size_wide_wqe(struct efa_resource **state)
+{
+	struct efa_resource *resource = *state;
+	size_t inject_msg_size, inject_rma_size;
+
+	resource->hints = efa_unit_test_alloc_hints(FI_EP_RDM, EFA_FABRIC_NAME);
+	resource->hints->tx_attr->inject_size = 64;
+	efa_unit_test_resource_construct_with_hints(resource, FI_EP_RDM, FI_VERSION(1, 18),
+	                                            resource->hints, true, true);
+
+	assert_int_equal(fi_getopt(&resource->ep->fid, FI_OPT_ENDPOINT, FI_OPT_INJECT_MSG_SIZE,
+			&inject_msg_size, &(size_t){sizeof inject_msg_size}), 0);
+	assert_int_equal(fi_getopt(&resource->ep->fid, FI_OPT_ENDPOINT, FI_OPT_INJECT_RMA_SIZE,
+			&inject_rma_size, &(size_t){sizeof inject_rma_size}), 0);
+
+	assert_int_equal(inject_msg_size, 64);
+	assert_int_equal(inject_rma_size, 64);
+}
