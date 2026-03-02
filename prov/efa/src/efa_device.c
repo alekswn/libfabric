@@ -71,8 +71,19 @@ int efa_device_construct_gid(struct efa_device *efa_device,
 		goto err_close;
 	}
 
-	/* Initialize max_inline_buf_size - will be queried from device if available */
+	/* Initialize max_inline_buf_size from device capability */
+#if HAVE_INLINE_BUF_SIZE_EX
+	/* Use inline_buf_size_ex if available (wide WQE support) */
+	if (efa_device->efa_attr.inline_buf_size_ex > 0) {
+		efa_device->max_inline_buf_size = efa_device->efa_attr.inline_buf_size_ex;
+	} else {
+		/* Fallback to regular inline_buf_size */
+		efa_device->max_inline_buf_size = efa_device->efa_attr.inline_buf_size;
+	}
+#else
+	/* Older rdma-core without wide WQE support */
 	efa_device->max_inline_buf_size = efa_device->efa_attr.inline_buf_size;
+#endif
 
 	memset(&efa_device->ibv_port_attr, 0, sizeof(efa_device->ibv_port_attr));
 	err = ibv_query_port(efa_device->ibv_ctx, 1, &efa_device->ibv_port_attr);
