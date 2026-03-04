@@ -75,6 +75,11 @@ struct efa_env {
 	 * Value of 0 means there is no limit on the size.
 	 */
 	size_t implicit_av_size;
+	/**
+	 * Enable wide WQE support for larger inline data sizes.
+	 * Disabled by default until end-to-end testing is complete.
+	 */
+	int enable_wide_wqe;
 };
 
 extern struct efa_env efa_env;

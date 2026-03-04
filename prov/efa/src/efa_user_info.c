@@ -507,7 +507,7 @@ int efa_user_info_alter_direct(int version, struct fi_info *info, const struct f
 	}
 
 	/* Handle inject_size hints for wide WQE support */
-	if (hints && hints->tx_attr && hints->tx_attr->inject_size > 0) {
+	if (efa_env.enable_wide_wqe && hints && hints->tx_attr && hints->tx_attr->inject_size > 0) {
 		if (hints->tx_attr->inject_size > device->max_inline_buf_size) {
 			/* Requested inject size exceeds device capability */
 			EFA_INFO(FI_LOG_CORE,

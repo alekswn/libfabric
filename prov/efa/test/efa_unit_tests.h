@@ -256,8 +256,8 @@ void test_info_direct_inject_size_no_hint();
 void test_info_direct_inject_size_small();
 void test_info_direct_inject_size_wide_wqe();
 void test_info_direct_inject_size_exceeds_max();
-void test_ep_getopt_inject_size_regular_wqe(struct efa_resource **state);
-void test_ep_getopt_inject_size_wide_wqe(struct efa_resource **state);
+void test_ep_getopt_inject_size_regular_wqe();
+void test_ep_getopt_inject_size_wide_wqe();
 /* end efa_unit_test_info.c */
 
 void test_efa_srx_min_multi_recv_size();

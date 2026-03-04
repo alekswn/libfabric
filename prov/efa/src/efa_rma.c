@@ -198,6 +198,11 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 
 	/* Check if we should use inline data */
 	if (flags & FI_INJECT) {
+		/* Check if inject RMA is supported */
+		if (base_ep->inject_rma_size == 0) {
+			return -FI_ENOSYS;
+		}
+		
 		total_len = ofi_total_iov_len(msg->msg_iov, msg->iov_count);
 		if (total_len > base_ep->inject_rma_size) {
 			EFA_WARN(FI_LOG_EP_DATA,
@@ -364,9 +369,7 @@ ssize_t efa_rma_inject_write(struct fid_ep *ep_fid, const void *buf, size_t len,
 	
 	/* Check if inject RMA is supported */
 	if (base_ep->inject_rma_size == 0) {
-		EFA_WARN(FI_LOG_EP_DATA,
-			 "Inject RMA not supported (inject_rma_size is 0)\\n");
-		return -FI_EOPNOTSUPP;
+		return -FI_ENOSYS;
 	}
 	
 	if (len > base_ep->inject_rma_size) {
@@ -401,9 +404,7 @@ ssize_t efa_rma_inject_writedata(struct fid_ep *ep_fid, const void *buf, size_t 
 	
 	/* Check if inject RMA is supported */
 	if (base_ep->inject_rma_size == 0) {
-		EFA_WARN(FI_LOG_EP_DATA,
-			 "Inject RMA not supported (inject_rma_size is 0)\\n");
-		return -FI_EOPNOTSUPP;
+		return -FI_ENOSYS;
 	}
 	
 	if (len > base_ep->inject_rma_size) {

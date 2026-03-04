@@ -1102,6 +1102,9 @@ void test_info_direct_inject_size_wide_wqe()
 	struct efa_device *device = &g_efa_selected_device_list[0];
 	struct fi_info *hints, *info = NULL;
 	int err;
+	int saved_enable_wide_wqe = efa_env.enable_wide_wqe;
+
+	efa_env.enable_wide_wqe = 1;
 
 	hints = efa_unit_test_alloc_hints(FI_EP_RDM, EFA_FABRIC_NAME);
 	hints->tx_attr->inject_size = 64;
@@ -1112,6 +1115,8 @@ void test_info_direct_inject_size_wide_wqe()
 	assert_int_equal(info->tx_attr->inject_size, 64);
 	assert_int_equal(info->tx_attr->size, rounddown_power_of_two(device->efa_attr.max_sq_wr / 2));
 	fi_freeinfo(info);
+
+	efa_env.enable_wide_wqe = saved_enable_wide_wqe;
 }
 
 /**
@@ -1123,6 +1128,9 @@ void test_info_direct_inject_size_exceeds_max()
 	struct efa_device *device = &g_efa_selected_device_list[0];
 	struct fi_info *hints, *info = NULL;
 	int err;
+	int saved_enable_wide_wqe = efa_env.enable_wide_wqe;
+
+	efa_env.enable_wide_wqe = 1;
 
 	hints = efa_unit_test_alloc_hints(FI_EP_RDM, EFA_FABRIC_NAME);
 	hints->tx_attr->inject_size = device->max_inline_buf_size + 1;
@@ -1130,6 +1138,8 @@ void test_info_direct_inject_size_exceeds_max()
 	err = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0ULL, hints, &info);
 	assert_int_equal(err, -FI_ENODATA);
 	assert_null(info);
+
+	efa_env.enable_wide_wqe = saved_enable_wide_wqe;
 }
 
 /**
@@ -1163,6 +1173,9 @@ void test_ep_getopt_inject_size_wide_wqe(struct efa_resource **state)
 {
 	struct efa_resource *resource = *state;
 	size_t inject_msg_size, inject_rma_size;
+	int saved_enable_wide_wqe = efa_env.enable_wide_wqe;
+
+	efa_env.enable_wide_wqe = 1;
 
 	resource->hints = efa_unit_test_alloc_hints(FI_EP_RDM, EFA_FABRIC_NAME);
 	resource->hints->tx_attr->inject_size = 64;
@@ -1176,4 +1189,6 @@ void test_ep_getopt_inject_size_wide_wqe(struct efa_resource **state)
 
 	assert_int_equal(inject_msg_size, 64);
 	assert_int_equal(inject_rma_size, 64);
+
+	efa_env.enable_wide_wqe = saved_enable_wide_wqe;
 }
