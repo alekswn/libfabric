@@ -4,7 +4,7 @@
 #ifndef EFA_DIRECT_OPE_H
 #define EFA_DIRECT_OPE_H
 
-#include "efa_base_ep.h"
+#include "efa_ep.h"
 
 /**
  * @brief Maximum number of IOVs supported by EFA device
@@ -32,19 +32,19 @@ struct efa_direct_ope {
  * and initializes the outstanding operation lists.
  * The pool is only created if FI_EFA_TRACK_MR is enabled.
  *
- * @param[in,out] base_ep	base endpoint
+ * @param[in,out] ep	efa-direct endpoint
  * @return 0 on success, negative error code on failure
  */
-int efa_direct_ope_pool_create(struct efa_base_ep *base_ep);
+int efa_direct_ope_pool_create(struct efa_ep *ep);
 
 /**
  * @brief Destroy the EFA direct operation entry pool
  *
  * Releases any outstanding operations and destroys the pool.
  *
- * @param[in,out] base_ep	base endpoint
+ * @param[in,out] ep	efa-direct endpoint
  */
-void efa_direct_ope_pool_destroy(struct efa_base_ep *base_ep);
+void efa_direct_ope_pool_destroy(struct efa_ep *ep);
 
 /**
  * @brief Allocate and record an operation entry
