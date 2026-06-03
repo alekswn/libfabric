@@ -1,0 +1,22 @@
+# Standalone Makefile for aq_bench
+# Usage: make -f Makefile.aq_bench [LIBFABRIC_DIR=../../]
+
+LIBFABRIC_DIR ?= ../../
+
+CC       ?= cc
+CFLAGS   ?= -O2 -Wall
+CFLAGS   += -pthread -DHAVE_ATOMICS -DHAVE_BUILTIN_ATOMICS
+CFLAGS   += -I$(LIBFABRIC_DIR)/include \
+            -I$(LIBFABRIC_DIR)/include/osx \
+            -I$(LIBFABRIC_DIR)/include/unix \
+            -I$(LIBFABRIC_DIR)
+
+TARGET = aq_bench
+
+$(TARGET): aq_bench.c
+	$(CC) $(CFLAGS) $< -o $@
+
+clean:
+	rm -f $(TARGET)
+
+.PHONY: clean
