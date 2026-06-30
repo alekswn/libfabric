@@ -7,6 +7,7 @@
 #include "efa_prov_info.h"
 #include "efa_user_info.h"
 #include "ofi_hmem.h"
+#include "efa_platform_features.h"
 
 struct efa_env efa_env = {
 	.iface = "all",
@@ -55,9 +56,39 @@ static void efa_env_unregistered_param_get(void)
 {
 	char *tmp;
 
+	/*
+	 * Firmware-rollout gate for the hardware completion counter. The
+	 * counter relies on NIC firmware whose fleet rollout is gradual, and
+	 * under SPMD every rank must make the same enable decision. So the
+	 * *default* is driven by the fleet-uniform per-platform feature flag
+	 * -- on only where the running platform has declared HW_CNTR deployed
+	 * fleet-wide -- deliberately NOT by the local host's live efadv
+	 * device_caps (efa_device_support_*()), which is inconsistent across
+	 * a heterogeneous fleet mid-rollout.
+	 *
+	 * Precedence:
+	 *   - FI_EFA_USE_HW_CNTR set  -> explicit per-host override, wins
+	 *     entirely: =1 forces on, =0 forces off.
+	 *   - otherwise              -> platform default, itself steerable by
+	 *     FI_EFA_FORCE_FEATURES=HW_CNTR / FI_EFA_DISABLE_FEATURES=HW_CNTR
+	 *     (see efa_platform_has_feature).
+	 */
 	tmp = getenv("FI_EFA_USE_HW_CNTR");
-	if (tmp)
+	if (tmp) {
 		efa_env.use_hw_cntr = atoi(tmp);
+		EFA_INFO(FI_LOG_CORE,
+			 "HW completion counter %s by explicit FI_EFA_USE_HW_CNTR\n",
+			 efa_env.use_hw_cntr ? "enabled" : "disabled");
+	} else {
+		efa_env.use_hw_cntr =
+			efa_platform_has_feature(EFA_PLATFORM_FEATURE_HW_CNTR) ? 1 : 0;
+		EFA_INFO(FI_LOG_CORE,
+			 "HW completion counter %s by platform feature default "
+			 "(override with FI_EFA_USE_HW_CNTR=0/1, or steer the "
+			 "platform decision with FI_EFA_FORCE_FEATURES=HW_CNTR / "
+			 "FI_EFA_DISABLE_FEATURES=HW_CNTR)\n",
+			 efa_env.use_hw_cntr ? "enabled" : "disabled");
+	}
 
 	/* Read enable_high_pps directly from environment variable to avoid showing in fi_info -e */
 	tmp = getenv("FI_EFA_ENABLE_HIGH_PPS");
@@ -259,6 +290,15 @@ void efa_env_define()
 			"any outstanding operations still reference an MR when "
 			"it is closed. This is useful for debugging memory "
 			"registration issues. (Default: false)");
+	fi_param_define(&efa_prov, "force_features", FI_PARAM_STRING,
+			"Comma/space-separated list of firmware feature tokens to "
+			"force-enable regardless of the platform's fleet-wide "
+			"default (e.g. \"HW_CNTR\"). Use only on a fleet known to "
+			"have the firmware. Overridden by FI_EFA_DISABLE_FEATURES.");
+	fi_param_define(&efa_prov, "disable_features", FI_PARAM_STRING,
+			"Comma/space-separated list of firmware feature tokens to "
+			"force-disable (kill switch). Takes precedence over both "
+			"FI_EFA_FORCE_FEATURES and the platform default.");
 }
 
 
