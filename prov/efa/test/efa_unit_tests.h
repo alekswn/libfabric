@@ -590,6 +590,14 @@ void test_efa_data_path_direct_qp_gen_increments_across_qps(void **state);
 void test_efa_data_path_direct_write_high_pps_hint_set(void **state);
 /* end efa_unit_test_data_path_direct.c */
 
+void test_efa_platform_feature_name(void **state);
+void test_efa_platform_feature_none(void **state);
+void test_efa_platform_feature_force(void **state);
+void test_efa_platform_feature_disable_wins(void **state);
+void test_efa_platform_feature_unknown_token(void **state);
+void test_efa_platform_feature_list_parse(void **state);
+/* end efa_unit_test_platform_features.c */
+
 
 void test_efa_cntr_ibv_cq_poll_list_same_tx_rx_cq_single_ep(void **state);
 void test_efa_cntr_ibv_cq_poll_list_separate_tx_rx_cq_single_ep(void **state);
