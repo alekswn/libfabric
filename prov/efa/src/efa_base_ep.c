@@ -629,9 +629,12 @@ static void efa_base_ep_get_inject_sizes(enum fi_ep_type ep_type,
 	}
 
 	/* efa-direct sizes; efa_rdm_ep_construct() overwrites these for the
-	 * non-direct RDM path. RMA inject is only available when wide WQE
-	 * is being used and the device supports RDMA write. */
-	if (inject_size_hint > attr->inline_buf_size && efa_device_support_rdma_write())
+	 * non-direct RDM path. RMA inject above the base inline buffer size
+	 * is only available when wide WQE is enabled for this platform (a
+	 * fleet-uniform decision) and the device supports RDMA write. */
+	if (inject_size_hint > attr->inline_buf_size &&
+	    efa_device_support_wide_wqe() &&
+	    efa_device_support_rdma_write())
 		*rma_inject_size_out = inject_size_hint;
 	else
 		*rma_inject_size_out = 0;

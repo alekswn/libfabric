@@ -591,6 +591,23 @@ int efa_user_info_alter_direct(int version, struct fi_info *info, const struct f
 		struct efadv_sq_depth_attr sq_attr = {0};
 		int max_sq_depth;
 
+		/*
+		 * An inject_size larger than the base inline_buf_size requires
+		 * wide WQE. That is a fleet-uniform, per-platform decision; when
+		 * it is disabled (platform opt-out or FI_EFA_DISABLE_FEATURES=
+		 * WIDE_WQE) we must reject the hint so fi_getinfo returns no EFA
+		 * info for it, rather than silently taking the wide path.
+		 */
+		if (!efa_device_support_wide_wqe()) {
+			EFA_INFO(FI_LOG_CORE,
+				 "Requested inject_size %zu exceeds base inline "
+				 "buffer size %u and wide WQE is disabled for this "
+				 "platform (enable with FI_EFA_FORCE_FEATURES="
+				 "WIDE_WQE, or lower inject_size)\n",
+				 hints->tx_attr->inject_size, inline_buf_size);
+			return -FI_ENODATA;
+		}
+
 		sq_attr.max_inline_data = hints->tx_attr->inject_size;
 		sq_attr.flags = EFADV_SQ_DEPTH_ATTR_INLINE_WRITE;
 		max_sq_depth = efadv_get_max_sq_depth(device->ibv_ctx,
