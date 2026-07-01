@@ -132,9 +132,39 @@ static int efa_ep_setopt(fid_t fid, int level, int optname, const void *optval, 
 		EFA_EP_SETOPT_THRESHOLD(MAX_RMA_SIZE, ep->max_rma_size, (size_t) ep->domain->device->max_rdma_size)
 		break;
 	case FI_OPT_INJECT_MSG_SIZE:
+		/*
+		 * An inject size above the device's base inline buffer size
+		 * requires wide WQE, which is a fleet-uniform, per-platform
+		 * decision. When wide WQE is disabled (platform opt-out or
+		 * FI_EFA_DISABLE_FEATURES=WIDE_WQE) reject the request up front
+		 * with a clear message, rather than relying on the generic
+		 * threshold check.
+		 */
+		if (*(size_t *) optval > ep->domain->device->efa_attr.inline_buf_size &&
+		    !efa_device_support_wide_wqe()) {
+			EFA_WARN(FI_LOG_EP_CTRL,
+				 "Requested FI_OPT_INJECT_MSG_SIZE %zu exceeds base "
+				 "inline buffer size %u and wide WQE is disabled for "
+				 "this platform (enable with "
+				 "FI_EFA_FORCE_FEATURES=WIDE_WQE, or lower the size)\n",
+				 *(size_t *) optval,
+				 ep->domain->device->efa_attr.inline_buf_size);
+			return -FI_EINVAL;
+		}
 		EFA_EP_SETOPT_THRESHOLD(INJECT_MSG_SIZE, ep->inject_msg_size, (size_t) ep->info->tx_attr->inject_size)
 		break;
 	case FI_OPT_INJECT_RMA_SIZE:
+		if (*(size_t *) optval > ep->domain->device->efa_attr.inline_buf_size &&
+		    !efa_device_support_wide_wqe()) {
+			EFA_WARN(FI_LOG_EP_CTRL,
+				 "Requested FI_OPT_INJECT_RMA_SIZE %zu exceeds base "
+				 "inline buffer size %u and wide WQE is disabled for "
+				 "this platform (enable with "
+				 "FI_EFA_FORCE_FEATURES=WIDE_WQE, or lower the size)\n",
+				 *(size_t *) optval,
+				 ep->domain->device->efa_attr.inline_buf_size);
+			return -FI_EINVAL;
+		}
 		EFA_EP_SETOPT_THRESHOLD(INJECT_RMA_SIZE, ep->inject_rma_size, ep->inject_rma_size)
 		break;
 	/* no op as efa direct ep will not use cuda api and shm in data transfer */
