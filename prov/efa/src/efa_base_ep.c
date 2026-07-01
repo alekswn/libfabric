@@ -297,8 +297,12 @@ int efa_qp_create(struct efa_qp **qp, struct ibv_qp_init_attr_ex *init_attr_ex,
 			efa_attr.flags |= EFADV_QP_FLAGS_UNSOLICITED_WRITE_RECV;
 #endif
 #if HAVE_INLINE_BUF_SIZE_EX
+		/* Wide WQE (extended inline) is a fleet-uniform platform
+		 * decision; only request the extended inline-write flag when it
+		 * is enabled for this platform. */
 		if (init_attr_ex->cap.max_inline_data >
 		    g_efa_selected_device_list[0].efa_attr.inline_buf_size &&
+		    efa_device_support_wide_wqe() &&
 		    efa_device_support_rdma_write())
 			efa_attr.flags |= EFADV_QP_FLAGS_INLINE_WRITE;
 #endif

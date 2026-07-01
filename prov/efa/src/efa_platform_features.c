@@ -9,32 +9,51 @@
 #include "efa_platform_features.h"
 
 /*
- * The platform table. Each entry is one "column": an instance platform and
- * the OR of feature bits whose backing firmware is confirmed deployed
- * fleet-wide for that platform. Matched against the DMI product_name
- * (/sys/class/dmi/id/product_name) by prefix.
+ * Features that are enabled fleet-wide by DEFAULT (opt-out polarity). A
+ * platform gets these unless it lists the same bit in its opt_out mask
+ * below. Features NOT in this baseline are off by default (opt-in
+ * polarity) and are turned on only by a platform's opt_in mask.
+ */
+static const uint64_t efa_platform_default_on_features =
+	EFA_PLATFORM_FEATURE_WIDE_WQE;
+
+/*
+ * The platform table. Each entry is one "column": an instance platform
+ * matched against the DMI product_name (/sys/class/dmi/id/product_name) by
+ * prefix, with two masks:
  *
- * Default (absent) => 0 => all features off, which is the safe default
- * during a rollout.
+ *   opt_in  - OR of opt-IN feature bits (off by default) to turn ON for
+ *             this platform, once their firmware is confirmed fleet-wide.
+ *   opt_out - OR of default-ON feature bits to turn OFF for this platform,
+ *             because their firmware rollout is NOT yet complete here.
+ *
+ * The effective per-platform default is:
+ *     (efa_platform_default_on_features & ~opt_out) | opt_in
+ *
+ * A platform with no entry gets exactly efa_platform_default_on_features.
  */
 struct efa_platform_entry {
 	const char *name_prefix;   /* DMI product_name prefix, e.g. "p5en" */
-	uint64_t enabled_features; /* OR of enum efa_platform_feature bits */
+	uint64_t opt_in;           /* opt-in bits to enable here */
+	uint64_t opt_out;          /* default-on bits to disable here */
 };
 
 static const struct efa_platform_entry efa_platform_table[] = {
-	/* EFA hardware completion counter firmware is deployed on the
-	 * P5en and P6-B200 fleets. */
-	{ "p5en",     EFA_PLATFORM_FEATURE_HW_CNTR },
-	{ "p6-b200",  EFA_PLATFORM_FEATURE_HW_CNTR },
-	/* Platforms without a firmware feature confirmed fleet-wide simply
-	 * omit an entry (or list 0); they get all features off. */
+	/* HW completion counter firmware is deployed on the P5en and P6-B200
+	 * fleets (opt-in). */
+	{ "p5en",       EFA_PLATFORM_FEATURE_HW_CNTR, 0 },
+	{ "p6-b200",    EFA_PLATFORM_FEATURE_HW_CNTR, 0 },
+	/* Wide WQE is on fleet-wide by default; opt these platforms OUT until
+	 * their wide-WQE firmware rollout is confirmed complete. */
+	{ "p6e-gb200",  0, EFA_PLATFORM_FEATURE_WIDE_WQE },
+	{ "g7",         0, EFA_PLATFORM_FEATURE_WIDE_WQE },
 };
 
 /* All known features, for token <-> bit matching. Keep in sync with
  * enum efa_platform_feature and efa_platform_feature_name(). */
 static const uint64_t efa_platform_all_features[] = {
 	EFA_PLATFORM_FEATURE_HW_CNTR,
+	EFA_PLATFORM_FEATURE_WIDE_WQE,
 };
 
 /* ---- cached state (parsed once) ---------------------------------------- */
@@ -49,6 +68,8 @@ const char *efa_platform_feature_name(uint64_t feature)
 	switch (feature) {
 	case EFA_PLATFORM_FEATURE_HW_CNTR:
 		return "HW_CNTR";
+	case EFA_PLATFORM_FEATURE_WIDE_WQE:
+		return "WIDE_WQE";
 	case EFA_PLATFORM_FEATURE_NONE:
 	default:
 		return NULL;
@@ -85,27 +106,38 @@ static void efa_platform_read_name(char *buf, size_t buflen)
 
 static uint64_t efa_platform_match_defaults(const char *name)
 {
+	uint64_t features;
 	size_t i;
 
+	/*
+	 * Unknown / unreadable platform: apply only the fleet-wide default-on
+	 * baseline. We can't opt any platform-specific bits in or out.
+	 */
 	if (!name || name[0] == '\0')
-		return 0;
+		return efa_platform_default_on_features;
 
 	for (i = 0; i < ARRAY_SIZE(efa_platform_table); i++) {
 		const char *pfx = efa_platform_table[i].name_prefix;
 		if (strncasecmp(name, pfx, strlen(pfx)) == 0) {
+			features = (efa_platform_default_on_features &
+				    ~efa_platform_table[i].opt_out) |
+				   efa_platform_table[i].opt_in;
 			EFA_INFO(FI_LOG_CORE,
 				 "Matched platform \"%s\" (product_name \"%s\"), "
-				 "fleet-uniform features = 0x%lx\n",
-				 pfx, name,
-				 (unsigned long)efa_platform_table[i].enabled_features);
-			return efa_platform_table[i].enabled_features;
+				 "fleet-uniform features = 0x%lx "
+				 "(opt_in=0x%lx opt_out=0x%lx)\n",
+				 pfx, name, (unsigned long)features,
+				 (unsigned long)efa_platform_table[i].opt_in,
+				 (unsigned long)efa_platform_table[i].opt_out);
+			return features;
 		}
 	}
 
 	EFA_INFO(FI_LOG_CORE,
 		 "No platform feature entry for product_name \"%s\"; "
-		 "all platform features default off\n", name);
-	return 0;
+		 "using default-on baseline = 0x%lx\n", name,
+		 (unsigned long)efa_platform_default_on_features);
+	return efa_platform_default_on_features;
 }
 
 /*

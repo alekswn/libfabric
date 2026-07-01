@@ -23,6 +23,7 @@
 #include "efa.h"
 #include "efa_device.h"
 #include "efa_prov_info.h"
+#include "efa_platform_features.h"
 
 #ifdef _WIN32
 #include "efawin.h"
@@ -478,17 +479,21 @@ bool efa_device_support_rdma_write(void)
 #endif
 
 /**
- * @brief check whether efa device supports wide WQE (128-byte)
+ * @brief check whether wide WQE (128-byte) is enabled for this platform
  *
- * @return a boolean indicating wide WQE support
+ * Fleet-uniform, per-platform decision (see efa_platform_has_feature).
+ * Deliberately does NOT consult the live per-host firmware capability
+ * (inline_buf_size_ex > inline_buf_size): under SPMD every rank must make
+ * the same decision, and a per-host probe is inconsistent across a
+ * heterogeneous fleet mid-rollout. The HAVE_INLINE_BUF_SIZE_EX compile
+ * guard remains because without efadv support the feature cannot exist.
+ *
+ * @return a boolean indicating whether wide WQE should be used
  */
 #if HAVE_INLINE_BUF_SIZE_EX
 bool efa_device_support_wide_wqe(void)
 {
-	assert(g_efa_selected_device_cnt > 0);
-
-	return g_efa_selected_device_list[0].efa_attr.inline_buf_size_ex >
-	       g_efa_selected_device_list[0].efa_attr.inline_buf_size;
+	return efa_platform_has_feature(EFA_PLATFORM_FEATURE_WIDE_WQE);
 }
 #else
 bool efa_device_support_wide_wqe(void)

@@ -39,8 +39,21 @@ enum efa_platform_feature {
 	 * EFA hardware completion counter in device/GPU memory (efadv
 	 * hardware-counter path, gated by NIC firmware advertised through
 	 * efadv device_caps). Backs efa_env.use_hw_cntr.
+	 *
+	 * Polarity: opt-IN. Off everywhere except platforms that list it.
 	 */
 	EFA_PLATFORM_FEATURE_HW_CNTR      = 1ULL << 0,
+	/*
+	 * Wide (128-byte) WQE / large inline write support (efadv
+	 * inline_buf_size_ex, gated by NIC firmware). Replaces the live
+	 * per-host efa_device_support_wide_wqe() probe with a fleet-uniform
+	 * answer.
+	 *
+	 * Polarity: opt-OUT. Enabled fleet-wide by default (listed in
+	 * efa_platform_default_on_features) and turned off only on platforms
+	 * whose firmware rollout is not complete.
+	 */
+	EFA_PLATFORM_FEATURE_WIDE_WQE     = 1ULL << 1,
 	/* append new features here; keep bits distinct and append-only */
 };
 

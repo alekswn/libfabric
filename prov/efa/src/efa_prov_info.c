@@ -244,11 +244,12 @@ void efa_prov_info_set_tx_rx_attr(struct fi_info *prov_info,
 
 	prov_info->tx_attr->inject_size = device->efa_attr.inline_buf_size;
 #if HAVE_INLINE_BUF_SIZE_EX
-	/* Only RDM eps on efa-direct support wide wqe. Current device has
-	 * not yet been added to global device list so we cannot call
-	 * efa_device_support_wide_wqe() here. */
-	if (ep_type == FI_EP_RDM &&
-	    device->efa_attr.inline_buf_size_ex > device->efa_attr.inline_buf_size)
+	/* Only RDM eps on efa-direct support wide wqe. The wide-WQE decision
+	 * is a fleet-uniform, per-platform one (efa_device_support_wide_wqe()
+	 * reads the platform flag via DMI, not the global device list, so it
+	 * is safe to call here even though this device has not yet been added
+	 * to that list). */
+	if (ep_type == FI_EP_RDM && efa_device_support_wide_wqe())
 		prov_info->tx_attr->inject_size = device->efa_attr.inline_buf_size_ex;
 #endif
 
