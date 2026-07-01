@@ -30,6 +30,11 @@ void test_efa_platform_feature_name(void **state)
 	assert_string_equal(
 		efa_platform_feature_name(EFA_PLATFORM_FEATURE_HW_CNTR),
 		"HW_CNTR");
+
+	assert_non_null(efa_platform_feature_name(EFA_PLATFORM_FEATURE_WIDE_WQE));
+	assert_string_equal(
+		efa_platform_feature_name(EFA_PLATFORM_FEATURE_WIDE_WQE),
+		"WIDE_WQE");
 }
 
 /* NONE and multi-bit queries are never enabled. */
@@ -119,4 +124,71 @@ void test_efa_platform_feature_list_parse(void **state)
 	assert_true(efa_platform_has_feature(EFA_PLATFORM_FEATURE_HW_CNTR));
 
 	unsetenv("FI_EFA_FORCE_FEATURES");
+}
+
+/*
+ * WIDE_WQE has opt-OUT polarity: it is on fleet-wide by default. With no
+ * overrides it must be enabled on any platform not explicitly opted out
+ * (p6e-gb200 / g7). To keep the test deterministic regardless of the
+ * instance it runs on, FORCE it -- which short-circuits before the
+ * platform-table lookup and proves the default-on baseline bit exists and
+ * is addressable by token.
+ */
+void test_efa_platform_feature_wide_wqe_force(void **state)
+{
+	(void)state;
+
+	setenv("FI_EFA_FORCE_FEATURES", "WIDE_WQE", 1);
+	unsetenv("FI_EFA_DISABLE_FEATURES");
+	efa_platform_features_reset_cache();
+
+	assert_true(efa_platform_has_feature(EFA_PLATFORM_FEATURE_WIDE_WQE));
+
+	unsetenv("FI_EFA_FORCE_FEATURES");
+}
+
+/*
+ * DISABLE is a kill switch that wins over the default-on baseline: even
+ * though WIDE_WQE is on fleet-wide by default, FI_EFA_DISABLE_FEATURES=
+ * WIDE_WQE must turn it off on any platform. Deterministic because DISABLE
+ * short-circuits before the platform-table lookup.
+ */
+void test_efa_platform_feature_wide_wqe_disable(void **state)
+{
+	(void)state;
+
+	unsetenv("FI_EFA_FORCE_FEATURES");
+	setenv("FI_EFA_DISABLE_FEATURES", "WIDE_WQE", 1);
+	efa_platform_features_reset_cache();
+
+	assert_false(efa_platform_has_feature(EFA_PLATFORM_FEATURE_WIDE_WQE));
+
+	unsetenv("FI_EFA_DISABLE_FEATURES");
+}
+
+/*
+ * With no overrides, WIDE_WQE (default-on) and HW_CNTR (default-off) must
+ * not resolve identically on a platform that is neither opted out of
+ * WIDE_WQE nor opted in to HW_CNTR. We can't assert absolute values
+ * without knowing the test host, but we can assert the two independent
+ * env overrides move each feature independently.
+ */
+void test_efa_platform_feature_independent_bits(void **state)
+{
+	bool wide_forced, hw_disabled;
+
+	(void)state;
+
+	setenv("FI_EFA_FORCE_FEATURES", "WIDE_WQE", 1);
+	setenv("FI_EFA_DISABLE_FEATURES", "HW_CNTR", 1);
+	efa_platform_features_reset_cache();
+
+	wide_forced = efa_platform_has_feature(EFA_PLATFORM_FEATURE_WIDE_WQE);
+	hw_disabled = efa_platform_has_feature(EFA_PLATFORM_FEATURE_HW_CNTR);
+
+	assert_true(wide_forced);   /* FORCE wins */
+	assert_false(hw_disabled);  /* DISABLE wins */
+
+	unsetenv("FI_EFA_FORCE_FEATURES");
+	unsetenv("FI_EFA_DISABLE_FEATURES");
 }

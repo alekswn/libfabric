@@ -596,6 +596,9 @@ void test_efa_platform_feature_force(void **state);
 void test_efa_platform_feature_disable_wins(void **state);
 void test_efa_platform_feature_unknown_token(void **state);
 void test_efa_platform_feature_list_parse(void **state);
+void test_efa_platform_feature_wide_wqe_force(void **state);
+void test_efa_platform_feature_wide_wqe_disable(void **state);
+void test_efa_platform_feature_independent_bits(void **state);
 /* end efa_unit_test_platform_features.c */
 
 
